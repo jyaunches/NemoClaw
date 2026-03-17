@@ -16,7 +16,7 @@
 # NOTE: openshell's Docker build engine interprets .dockerignore differently
 # from standard Docker. /dist incorrectly excludes nemoclaw/dist/. This test
 # temporarily adds an exception during the build. See:
-#   https://github.com/NVIDIA/NemoClaw/issues/XXX
+#   https://github.com/NVIDIA/NemoClaw/issues/126
 
 set -uo pipefail
 
