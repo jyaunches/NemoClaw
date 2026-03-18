@@ -35,6 +35,7 @@ INSTALL_STATUS=1
 UNINSTALL_STATUS=1
 ANSWERS_PIPE=""
 ANSWER_WRITER_PID=""
+LOG_FOLLOW_PID=""
 
 usage() {
   cat <<'EOF'
@@ -167,15 +168,32 @@ feed_install_answers() {
   ) > "$answers_pipe"
 }
 
+start_log_follow() {
+  local logfile="$1"
+  : > "$logfile"
+  tail -n +1 -f "$logfile" &
+  LOG_FOLLOW_PID=$!
+}
+
+stop_log_follow() {
+  if [ -n "$LOG_FOLLOW_PID" ] && kill -0 "$LOG_FOLLOW_PID" 2>/dev/null; then
+    kill "$LOG_FOLLOW_PID" 2>/dev/null || true
+    wait "$LOG_FOLLOW_PID" 2>/dev/null || true
+  fi
+  LOG_FOLLOW_PID=""
+}
+
 run_install() {
   local answers_pipe="$1"
   info "Running install.sh with sandbox '$SANDBOX_NAME'"
   feed_install_answers "$answers_pipe" "$INSTALL_LOG" &
   ANSWER_WRITER_PID=$!
+  start_log_follow "$INSTALL_LOG"
   set +e
-  bash "$REPO_DIR/install.sh" < "$answers_pipe" > >(tee "$INSTALL_LOG") 2>&1
+  bash "$REPO_DIR/install.sh" < "$answers_pipe" >> "$INSTALL_LOG" 2>&1
   INSTALL_STATUS=$?
   set -e
+  stop_log_follow
   return 0
 }
 
@@ -189,10 +207,12 @@ run_uninstall() {
   fi
 
   info "Running uninstall.sh for cleanup"
+  start_log_follow "$UNINSTALL_LOG"
   set +e
-  bash "$REPO_DIR/uninstall.sh" "${args[@]}" > >(tee "$UNINSTALL_LOG") 2>&1
+  bash "$REPO_DIR/uninstall.sh" "${args[@]}" >> "$UNINSTALL_LOG" 2>&1
   UNINSTALL_STATUS=$?
   set -e
+  stop_log_follow
   return 0
 }
 
@@ -230,6 +250,8 @@ verify_cleanup() {
 }
 
 cleanup() {
+  stop_log_follow
+
   if [ -n "$ANSWER_WRITER_PID" ] && kill -0 "$ANSWER_WRITER_PID" 2>/dev/null; then
     kill "$ANSWER_WRITER_PID" 2>/dev/null || true
   fi
