@@ -1,4 +1,5 @@
 name: Feature/Enhancement Request
++description: Submit a feature request other enhancement to help us improve NemoClaw
 labels: ["status: triage"]
 body:
   - type: textarea
