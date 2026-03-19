@@ -21,12 +21,13 @@
 - [ ] `make docs` builds without warnings (for doc changes)
 
 ## Checklist
-- [ ] Follows [Conventional Commits](https://www.conventionalcommits.org/) (`feat`, `fix`, `docs`, etc.)
 
 ### Code changes
 <!-- Skip if this is a doc-only PR. -->
-- [ ] Tests added or updated
-- [ ] Doc pages updated for any user-facing behavior changes
+- [ ] `make format` applied (TypeScript and Python)
+- [ ] Tests added or updated for new or changed behavior
+- [ ] No secrets, API keys, or credentials committed
+- [ ] Doc pages updated for any user-facing behavior changes (new commands, changed defaults, new features, bug fixes that contradict existing docs)
 
 ### Doc changes
 <!-- Skip if this PR has no doc changes. -->
