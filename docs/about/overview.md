@@ -20,11 +20,13 @@ status: published
 
 # Overview
 
-NVIDIA NemoClaw is an open source reference stack that simplifies running [OpenClaw](https://openclaw.ai) always-on assistants more safely.
-It incorporates policy-based privacy and security guardrails, giving users control over their agents' behavior and data handling. This enables self-evolving claws to run more safely in clouds, on prem, RTX PCs, and DGX Spark.
+NVIDIA NemoClaw is an open source reference stack that simplifies running [OpenClaw](https://openclaw.ai) always on assistants—with a single command.
+It incorporates policy-based privacy and security guardrails, giving users control over their agents’ behavior and data handling.
+This enables self-evolving claws to run more safely in clouds, on prem, RTX PCs and DGX Spark.
 
-NemoClaw uses open source models, such as [NVIDIA Nemotron](https://build.nvidia.com), alongside the [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) runtime, part of the NVIDIA Agent Toolkit, an environment designed for executing claws more safely.
-By combining open source models with built-in safety measures, NemoClaw simplifies AI agent deployment with additional security.
+NemoClaw uses open source models, such as [NVIDIA Nemotron](https://build.nvidia.com), alongside the [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) runtime, part of the NVIDIA Agent Toolkit—a secure environment designed for executing claws more safely.
+By combining powerful open source models with built-in safety measures, NemoClaw simplifies and secures AI agent deployment.
+
 
 | Capability              | Description                                                                                                                                          |
 |-------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------|
