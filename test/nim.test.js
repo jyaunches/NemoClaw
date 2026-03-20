@@ -184,9 +184,10 @@ describe("nim", () => {
 
       assert.equal(assessments[0].model.name, "nvidia/nemotron-3-nano-30b-a3b");
       assert.equal(assessments[0].status, "recommended");
+      assert.match(assessments[0].reason, /Recommended on l40s/);
       assert.match(
         assessments.find((assessment) => assessment.model.name === "openai/gpt-oss-20b").reason,
-        /GPU family/
+        /published support/
       );
     });
   });

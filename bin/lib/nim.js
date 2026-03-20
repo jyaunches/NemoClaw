@@ -127,6 +127,12 @@ function describeGpuFamilies(profile) {
   return `${families.slice(0, 3).join("/")}+`;
 }
 
+function describeDetectedGpu(gpu) {
+  if (gpu.family) return gpu.family;
+  if ((gpu.families || []).length > 0) return gpu.families.join("/");
+  return "detected GPU";
+}
+
 function describeProfile(profile) {
   const count = profile.minGpuCount || 1;
   const family = describeGpuFamilies(profile);
@@ -142,7 +148,9 @@ function evaluateProfile(profile, gpu, freeDiskGB) {
   if ((profile.gpuFamilies || []).length > 0) {
     const families = gpu.families || [];
     if (!families.some((family) => profile.gpuFamilies.includes(family))) {
-      unmetRequirements.push(`GPU family (${describeGpuFamilies(profile)})`);
+      unmetRequirements.push(
+        `published support for ${describeGpuFamilies(profile)} (detected ${describeDetectedGpu(gpu)})`
+      );
       gap += 1000;
     }
   }
@@ -244,7 +252,7 @@ function assessNimModels(gpu, freeDiskGB = gpu.freeDiskGB ?? null) {
         status: "supported",
         score: bestMatch.score,
         matchedProfile: bestMatch.profile,
-        reason: `Fits this machine via ${describeProfile(bestMatch.profile)}.`,
+        reason: `Matches the published support profile for ${describeDetectedGpu(gpu)} via ${describeProfile(bestMatch.profile)}.`,
       });
       continue;
     }
@@ -276,7 +284,7 @@ function assessNimModels(gpu, freeDiskGB = gpu.freeDiskGB ?? null) {
   compatible.forEach((assessment, index) => {
     if (index < recommendedLimit && assessment.score >= topScore - 18) {
       assessment.status = "recommended";
-      assessment.reason = `Recommended for this machine via ${describeProfile(assessment.matchedProfile || {})}.`;
+      assessment.reason = `Recommended on ${describeDetectedGpu(gpu)} based on the published support profile ${describeProfile(assessment.matchedProfile || {})}.`;
     }
   });
 

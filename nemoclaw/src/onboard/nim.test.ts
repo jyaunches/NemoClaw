@@ -241,9 +241,10 @@ describe("nim helpers", () => {
 
     expect(assessments[0]?.model.name).toBe("nvidia/nemotron-3-nano-30b-a3b");
     expect(assessments[0]?.status).toBe("recommended");
+    expect(assessments[0]?.reason).toContain("Recommended on l40s");
     expect(assessments.some((assessment) => assessment.status === "unsupported")).toBe(true);
     expect(assessments.find((assessment) => assessment.model.name === "openai/gpt-oss-20b")?.reason).toContain(
-      "GPU family",
+      "published support",
     );
   });
 
