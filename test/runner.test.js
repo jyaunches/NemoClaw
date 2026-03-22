@@ -211,8 +211,10 @@ describe("runner helpers", () => {
       const fs = require("fs");
       const tg = fs.readFileSync(path.join(__dirname, "..", "scripts", "telegram-bridge.js"), "utf-8");
       const dc = fs.readFileSync(path.join(__dirname, "..", "scripts", "discord-bridge.js"), "utf-8");
+      const sl = fs.readFileSync(path.join(__dirname, "..", "scripts", "slack-bridge.js"), "utf-8");
       assert.ok(tg.includes("require(\"./bridge-core\")"), "telegram-bridge.js must use bridge-core");
       assert.ok(dc.includes("require(\"./bridge-core\")"), "discord-bridge.js must use bridge-core");
+      assert.ok(sl.includes("require(\"./bridge-core\")"), "slack-bridge.js must use bridge-core");
     });
   });
 });

@@ -150,6 +150,12 @@ do_start() {
       node "$REPO_DIR/scripts/discord-bridge.js"
   fi
 
+  # Slack bridge (only if both tokens provided)
+  if [ -n "${SLACK_BOT_TOKEN:-}" ] && [ -n "${SLACK_APP_TOKEN:-}" ]; then
+    SANDBOX_NAME="$SANDBOX_NAME" start_service slack-bridge \
+      node "$REPO_DIR/scripts/slack-bridge.js"
+  fi
+
   # cloudflared tunnel
   if command -v cloudflared > /dev/null 2>&1; then
     start_service cloudflared \
