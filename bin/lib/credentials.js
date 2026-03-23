@@ -107,17 +107,18 @@ function promptSecret(question) {
 }
 
 function prompt(question, opts = {}) {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const silent = opts.secret === true && process.stdin.isTTY && process.stderr.isTTY;
     if (silent) {
       promptSecret(question)
         .then(resolve)
         .catch((err) => {
           if (err && err.code === "SIGINT") {
+            reject(err);
             process.kill(process.pid, "SIGINT");
             return;
           }
-          throw err;
+          reject(err);
         });
       return;
     }

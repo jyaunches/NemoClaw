@@ -184,10 +184,10 @@ function hasStaleGateway(gwInfoOutput) {
   return typeof gwInfoOutput === "string" && gwInfoOutput.length > 0 && gwInfoOutput.includes(GATEWAY_NAME);
 }
 
-function streamSandboxCreate(command) {
+function streamSandboxCreate(command, env = process.env) {
   const child = spawn("bash", ["-lc", command], {
     cwd: ROOT,
-    env: process.env,
+    env,
     stdio: ["ignore", "pipe", "pipe"],
   });
 
@@ -300,6 +300,10 @@ function runCaptureOpenshell(args, opts = {}) {
 
 function formatEnvAssignment(name, value) {
   return `${name}=${value}`;
+}
+
+function getCurlTimingArgs() {
+  return ["--connect-timeout 5", "--max-time 20"];
 }
 
 function buildProviderArgs(action, name, type, credentialEnv, baseUrl) {
@@ -513,6 +517,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey) {
     try {
       const cmd = [
         "curl -sS",
+        ...getCurlTimingArgs(),
         `-o ${shellQuote(bodyFile)}`,
         "-w '%{http_code}'",
         "-H 'Content-Type: application/json'",
@@ -556,6 +561,7 @@ function probeAnthropicEndpoint(endpointUrl, model, apiKey) {
   try {
     const cmd = [
       "curl -sS",
+      ...getCurlTimingArgs(),
       `-o ${shellQuote(bodyFile)}`,
       "-w '%{http_code}'",
       '-H "x-api-key: $NEMOCLAW_PROBE_API_KEY"',
@@ -718,6 +724,7 @@ function fetchNvidiaEndpointModels(apiKey) {
   try {
     const cmd = [
       "curl -sS",
+      ...getCurlTimingArgs(),
       `-o ${shellQuote(bodyFile)}`,
       "-w '%{http_code}'",
       "-H 'Content-Type: application/json'",
@@ -771,6 +778,7 @@ function fetchOpenAiLikeModels(endpointUrl, apiKey) {
   try {
     const cmd = [
       "curl -sS",
+      ...getCurlTimingArgs(),
       `-o ${shellQuote(bodyFile)}`,
       "-w '%{http_code}'",
       ...(apiKey ? ['-H "Authorization: Bearer $NEMOCLAW_PROBE_API_KEY"'] : []),
@@ -806,6 +814,7 @@ function fetchAnthropicModels(endpointUrl, apiKey) {
   try {
     const cmd = [
       "curl -sS",
+      ...getCurlTimingArgs(),
       `-o ${shellQuote(bodyFile)}`,
       "-w '%{http_code}'",
       '-H "x-api-key: $NEMOCLAW_PROBE_API_KEY"',
@@ -1378,16 +1387,17 @@ async function createSandbox(gpu, model, provider, preferredInferenceApi = null)
   const chatUiUrl = process.env.CHAT_UI_URL || "http://127.0.0.1:18789";
   patchStagedDockerfile(stagedDockerfile, model, chatUiUrl, String(Date.now()), provider, preferredInferenceApi);
   const envArgs = [formatEnvAssignment("CHAT_UI_URL", chatUiUrl)];
+  const sandboxEnv = { ...process.env };
   if (process.env.NVIDIA_API_KEY) {
-    envArgs.push(formatEnvAssignment("NVIDIA_API_KEY", process.env.NVIDIA_API_KEY));
+    sandboxEnv.NVIDIA_API_KEY = process.env.NVIDIA_API_KEY;
   }
   const discordToken = getCredential("DISCORD_BOT_TOKEN") || process.env.DISCORD_BOT_TOKEN;
   if (discordToken) {
-    envArgs.push(formatEnvAssignment("DISCORD_BOT_TOKEN", discordToken));
+    sandboxEnv.DISCORD_BOT_TOKEN = discordToken;
   }
   const slackToken = getCredential("SLACK_BOT_TOKEN") || process.env.SLACK_BOT_TOKEN;
   if (slackToken) {
-    envArgs.push(formatEnvAssignment("SLACK_BOT_TOKEN", slackToken));
+    sandboxEnv.SLACK_BOT_TOKEN = slackToken;
   }
 
   // Run without piping through awk — the pipe masked non-zero exit codes
@@ -1403,7 +1413,7 @@ async function createSandbox(gpu, model, provider, preferredInferenceApi = null)
     ...envArgs,
     "nemoclaw-start",
   ])} 2>&1`;
-  const createResult = await streamSandboxCreate(createCommand);
+  const createResult = await streamSandboxCreate(createCommand, sandboxEnv);
 
   // Clean up build context regardless of outcome
   run(`rm -rf "${buildCtx}"`, { ignoreError: true });

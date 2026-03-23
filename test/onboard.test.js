@@ -516,6 +516,9 @@ const { createSandbox } = require(${onboardPath});
     assert.match(createCommand.command, /'nemoclaw-start'/);
     assert.doesNotMatch(createCommand.command, /'--upload'/);
     assert.doesNotMatch(createCommand.command, /OPENCLAW_CONFIG_PATH/);
+    assert.doesNotMatch(createCommand.command, /NVIDIA_API_KEY=/);
+    assert.doesNotMatch(createCommand.command, /DISCORD_BOT_TOKEN=/);
+    assert.doesNotMatch(createCommand.command, /SLACK_BOT_TOKEN=/);
   });
 
   it("accepts gateway inference when system inference is separately not configured", () => {
