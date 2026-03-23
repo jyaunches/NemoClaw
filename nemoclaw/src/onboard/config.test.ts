@@ -84,12 +84,12 @@ describe("onboard/config", () => {
     });
 
     const endpointCases: [EndpointType, string][] = [
-      ["build", "NVIDIA Endpoint API"],
+      ["build", "NVIDIA Endpoints"],
       ["ollama", "Local Ollama"],
       ["vllm", "Local vLLM"],
-      ["nim-local", "Local NIM"],
+      ["nim-local", "Local NVIDIA NIM"],
       ["ncp", "NVIDIA Cloud Partner"],
-      ["custom", "Managed Inference Route"],
+      ["custom", "Other OpenAI-compatible endpoint"],
     ];
 
     for (const [endpointType, expected] of endpointCases) {

@@ -6,6 +6,8 @@ const { shellQuote } = require("./runner");
 const HOST_GATEWAY_URL = "http://host.openshell.internal";
 const CONTAINER_REACHABILITY_IMAGE = "curlimages/curl:8.10.1";
 const DEFAULT_OLLAMA_MODEL = "nemotron-3-nano:30b";
+const SMALL_OLLAMA_MODEL = "qwen2.5:7b";
+const LARGE_OLLAMA_MIN_MEMORY_MB = 32768;
 
 function getLocalProviderBaseUrl(provider) {
   switch (provider) {
@@ -13,6 +15,17 @@ function getLocalProviderBaseUrl(provider) {
       return `${HOST_GATEWAY_URL}:8000/v1`;
     case "ollama-local":
       return `${HOST_GATEWAY_URL}:11434/v1`;
+    default:
+      return null;
+  }
+}
+
+function getLocalProviderValidationBaseUrl(provider) {
+  switch (provider) {
+    case "vllm-local":
+      return "http://localhost:8000/v1";
+    case "ollama-local":
+      return "http://localhost:11434/v1";
     default:
       return null;
   }
@@ -105,14 +118,23 @@ function parseOllamaList(output) {
 function getOllamaModelOptions(runCapture) {
   const output = runCapture("ollama list 2>/dev/null", { ignoreError: true });
   const parsed = parseOllamaList(output);
-  if (parsed.length > 0) {
-    return parsed;
-  }
-  return [DEFAULT_OLLAMA_MODEL];
+  return parsed;
 }
 
-function getDefaultOllamaModel(runCapture) {
+function getBootstrapOllamaModelOptions(gpu) {
+  const options = [SMALL_OLLAMA_MODEL];
+  if (gpu && gpu.totalMemoryMB >= LARGE_OLLAMA_MIN_MEMORY_MB) {
+    options.push(DEFAULT_OLLAMA_MODEL);
+  }
+  return options;
+}
+
+function getDefaultOllamaModel(runCapture, gpu = null) {
   const models = getOllamaModelOptions(runCapture);
+  if (models.length === 0) {
+    const bootstrap = getBootstrapOllamaModelOptions(gpu);
+    return bootstrap[0];
+  }
   return models.includes(DEFAULT_OLLAMA_MODEL) ? DEFAULT_OLLAMA_MODEL : models[0];
 }
 
@@ -164,8 +186,12 @@ module.exports = {
   CONTAINER_REACHABILITY_IMAGE,
   DEFAULT_OLLAMA_MODEL,
   HOST_GATEWAY_URL,
+  LARGE_OLLAMA_MIN_MEMORY_MB,
+  SMALL_OLLAMA_MODEL,
   getDefaultOllamaModel,
+  getBootstrapOllamaModelOptions,
   getLocalProviderBaseUrl,
+  getLocalProviderValidationBaseUrl,
   getLocalProviderContainerReachabilityCheck,
   getLocalProviderHealthCheck,
   getOllamaModelOptions,

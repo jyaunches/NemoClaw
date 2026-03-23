@@ -86,8 +86,8 @@ describe("local inference helpers", () => {
     ).toEqual(["nemotron-3-nano:30b", "qwen3:32b"]);
   });
 
-  it("falls back to the default ollama model when list output is empty", () => {
-    expect(getOllamaModelOptions(() => "")).toEqual([DEFAULT_OLLAMA_MODEL]);
+  it("returns no installed ollama models when list output is empty", () => {
+    expect(getOllamaModelOptions(() => "")).toEqual([]);
   });
 
   it("prefers the default ollama model when present", () => {

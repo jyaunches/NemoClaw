@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
 import { describe, it, expect } from "vitest";
 
 import {
@@ -50,7 +51,20 @@ describe("inference selection config", () => {
       profile: DEFAULT_ROUTE_PROFILE,
       credentialEnv: DEFAULT_ROUTE_CREDENTIAL_ENV,
       provider: "nvidia-nim",
-      providerLabel: "NVIDIA Endpoint API",
+      providerLabel: "NVIDIA Endpoints",
+    });
+  });
+
+  it("maps compatible-anthropic-endpoint to the sandbox inference route", () => {
+    assert.deepEqual(getProviderSelectionConfig("compatible-anthropic-endpoint", "claude-sonnet-proxy"), {
+      endpointType: "custom",
+      endpointUrl: INFERENCE_ROUTE_URL,
+      ncpPartner: null,
+      model: "claude-sonnet-proxy",
+      profile: DEFAULT_ROUTE_PROFILE,
+      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+      provider: "compatible-anthropic-endpoint",
+      providerLabel: "Other Anthropic-compatible endpoint",
     });
   });
 
