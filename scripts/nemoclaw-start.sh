@@ -95,7 +95,7 @@ PYTOKEN
 start_auto_pair() {
   # Run auto-pair as sandbox user (it talks to the gateway via CLI)
   # SECURITY: Pass resolved openclaw path to prevent PATH hijacking
-  OPENCLAW_BIN="$OPENCLAW" nohup gosu sandbox python3 - <<'PYAUTOPAIR' >> /tmp/gateway.log 2>&1 &
+  OPENCLAW_BIN="$OPENCLAW" nohup gosu sandbox python3 - <<'PYAUTOPAIR' >> /tmp/auto-pair.log 2>&1 &
 import json
 import os
 import subprocess
@@ -177,6 +177,11 @@ touch /tmp/gateway.log
 chown gateway:gateway /tmp/gateway.log
 chmod 600 /tmp/gateway.log
 
+# Separate log for auto-pair so sandbox user can write to it
+touch /tmp/auto-pair.log
+chown sandbox:sandbox /tmp/auto-pair.log
+chmod 600 /tmp/auto-pair.log
+
 # Verify symlinks in .openclaw point to expected targets (prevent symlink injection)
 for link in agents extensions workspace skills hooks identity devices canvas cron; do
   target="$(readlink -f "/sandbox/.openclaw/$link" 2>/dev/null || true)"
@@ -197,3 +202,7 @@ echo "[gateway] openclaw gateway launched as 'gateway' user (pid $GATEWAY_PID)"
 
 start_auto_pair
 print_dashboard_urls
+
+# Keep container running by waiting on the gateway process.
+# This script is PID 1 (ENTRYPOINT); if it exits, Docker kills all children.
+wait "$GATEWAY_PID"
