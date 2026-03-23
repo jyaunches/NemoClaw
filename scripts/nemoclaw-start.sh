@@ -19,7 +19,17 @@ set -euo pipefail
 # into commands executed by the entrypoint or auto-pair watcher.
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
-NEMOCLAW_CMD=("$@")
+# Filter out self-invocation: openshell sandbox create passes "nemoclaw-start"
+# as the command, but since this script is now the ENTRYPOINT, receiving our
+# own name as $1 would cause infinite recursion via the NEMOCLAW_CMD exec path.
+ARGS=()
+for arg in "$@"; do
+  case "$arg" in
+    nemoclaw-start|/usr/local/bin/nemoclaw-start) ;;  # skip self-reference
+    *) ARGS+=("$arg") ;;
+  esac
+done
+NEMOCLAW_CMD=("${ARGS[@]}")
 CHAT_UI_URL="${CHAT_UI_URL:-http://127.0.0.1:18789}"
 PUBLIC_PORT=18789
 OPENCLAW="$(command -v openclaw)"  # Resolve once, use absolute path everywhere
