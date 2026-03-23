@@ -191,8 +191,7 @@ else
   exit 1
 fi
 
-<<<<<<< HEAD
-if nemoclaw --help > /dev/null 2>&1; then
+if nemoclaw --help >/dev/null 2>&1; then
   pass "nemoclaw --help exits 0"
 else
   fail "nemoclaw --help failed"

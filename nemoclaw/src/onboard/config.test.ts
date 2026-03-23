@@ -103,8 +103,13 @@ describe("onboard/config", () => {
     }
 
     it("returns Unknown for unsupported endpoint types", () => {
-      const config = makeConfig({ endpointType: "build", providerLabel: undefined }) as NemoClawOnboardConfig;
-      expect(describeOnboardProvider({ ...config, endpointType: "bogus" as EndpointType })).toBe("Unknown");
+      const config = makeConfig({
+        endpointType: "build",
+        providerLabel: undefined,
+      });
+      expect(describeOnboardProvider({ ...config, endpointType: "bogus" as EndpointType })).toBe(
+        "Unknown",
+      );
     });
   });
 
