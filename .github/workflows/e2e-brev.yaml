@@ -15,19 +15,25 @@ on:
         required: false
         default: ""
       test_suite:
-        description: "Test suite to run"
+        description: "Test suite(s) to run (comma-separated)"
         required: true
         default: "full"
         type: choice
         options:
           - full
+          - telegram-injection
           - credential-sanitization
           - all
+      pool_mode:
+        description: "Use warm pool (true) or create ephemeral instance (false)"
+        required: false
+        type: boolean
+        default: true
       keep_alive:
         description: "Keep Brev instance alive after tests (for SSH debugging)"
         required: false
         type: boolean
-        default: true
+        default: false
   workflow_call:
     inputs:
       branch:
@@ -41,10 +47,14 @@ on:
         required: false
         type: string
         default: "full"
-      keep_alive:
+      pool_mode:
         required: false
         type: boolean
         default: true
+      keep_alive:
+        required: false
+        type: boolean
+        default: false
     secrets:
       BREV_API_TOKEN:
         required: true
@@ -60,11 +70,106 @@ concurrency:
   group: e2e-brev-${{ inputs.pr_number || github.run_id }}
   cancel-in-progress: true
 
+env:
+  BREV_ORG: "Nemoclaw CI/CD"
+  BREV_CPU: "4x16"
+
+# ---------------------------------------------------------------------------
+# Job 1: Build the test matrix.
+#
+# Expands the test_suite input into individual suites, and for each one
+# either claims a warm pool instance or generates an ephemeral name.
+# ---------------------------------------------------------------------------
 jobs:
-  e2e-brev:
-    if: github.repository == 'NVIDIA/NemoClaw'
+  build-matrix:
+    # TODO: restore to 'NVIDIA/NemoClaw' before merge (Phase 6)
+    if: github.repository == 'jyaunches/NemoClaw'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.branch }}
+
+      - name: Install Brev CLI
+        run: |
+          curl -fsSL -o /tmp/brev.tar.gz \
+            "https://github.com/brevdev/brev-cli/releases/download/v0.6.310/brev-cli_0.6.310_linux_amd64.tar.gz"
+          tar -xzf /tmp/brev.tar.gz -C /usr/local/bin brev
+          chmod +x /usr/local/bin/brev
+
+      - name: Authenticate Brev
+        run: |
+          mkdir -p ~/.brev
+          echo '{"step":1,"hasRunBrevShell":true,"hasRunBrevOpen":true}' > ~/.brev/onboarding_step.json
+          brev login --token "$BREV_API_TOKEN"
+        env:
+          BREV_API_TOKEN: ${{ secrets.BREV_API_TOKEN }}
+
+      - name: Build matrix
+        id: matrix
+        run: |
+          TEST_SUITE="${{ inputs.test_suite }}"
+
+          # Expand "all" to the full list
+          if [ "$TEST_SUITE" = "all" ]; then
+            SUITES="full telegram-injection credential-sanitization"
+          else
+            SUITES=$(echo "$TEST_SUITE" | tr ',' ' ')
+          fi
+
+          POOL_MODE="${{ inputs.pool_mode }}"
+          MATRIX="["
+          FIRST=true
+
+          for suite in $SUITES; do
+            INSTANCE=""
+            MODE="ephemeral"
+
+            if [ "$POOL_MODE" = "true" ]; then
+              # Try to claim a warm instance
+              CLAIMED=$(scripts/e2e-pool.sh claim 2>/dev/null) || true
+              if [ -n "$CLAIMED" ]; then
+                INSTANCE="$CLAIMED"
+                MODE="warm"
+                echo "✅ Claimed $INSTANCE for suite $suite"
+              else
+                # Fall back to ephemeral
+                INSTANCE="e2e-pr-${{ inputs.pr_number || github.run_id }}-${suite}"
+                MODE="ephemeral"
+                echo "⚠ No warm instances available for $suite — falling back to ephemeral ($INSTANCE)"
+              fi
+            else
+              INSTANCE="e2e-pr-${{ inputs.pr_number || github.run_id }}-${suite}"
+              MODE="ephemeral"
+            fi
+
+            if ! $FIRST; then MATRIX="${MATRIX},"; fi
+            FIRST=false
+            MATRIX="${MATRIX}{\"suite\":\"${suite}\",\"instance\":\"${INSTANCE}\",\"mode\":\"${MODE}\"}"
+          done
+
+          MATRIX="${MATRIX}]"
+          echo "matrix=${MATRIX}" >> "$GITHUB_OUTPUT"
+          echo "Matrix: $MATRIX"
+        env:
+          BREV_API_TOKEN: ${{ secrets.BREV_API_TOKEN }}
+
+  # ---------------------------------------------------------------------------
+  # Job 2: Run tests — one parallel job per suite/instance pair.
+  # ---------------------------------------------------------------------------
+  run-tests:
+    needs: build-matrix
+    if: needs.build-matrix.outputs.matrix != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      matrix:
+        include: ${{ fromJson(needs.build-matrix.outputs.matrix) }}
+      fail-fast: false
     steps:
       - name: Checkout target branch
         uses: actions/checkout@v6
@@ -78,10 +183,10 @@ jobs:
         run: |
           PR_SHA=$(gh pr view ${{ inputs.pr_number }} --json headRefOid -q .headRefOid)
           CHECK_RUN_ID=$(gh api repos/${{ github.repository }}/check-runs \
-            -f name="Brev E2E (${{ inputs.test_suite }})" \
+            -f name="Brev E2E (${{ matrix.suite }})" \
             -f head_sha="$PR_SHA" \
             -f status="in_progress" \
-            -f "output[title]=Running on ephemeral Brev instance" \
+            -f "output[title]=Running ${{ matrix.suite }} on ${{ matrix.mode }} instance" \
             -f "output[summary]=Tests in progress..." \
             --jq '.id')
           echo "CHECK_RUN_ID=$CHECK_RUN_ID" >> "$GITHUB_ENV"
@@ -95,23 +200,57 @@ jobs:
 
       - name: Install Brev CLI
         run: |
-          # Pin to v0.6.310 — v0.6.322 removed --cpu flag and defaults to GPU instances
-          curl -fsSL -o /tmp/brev.tar.gz "https://github.com/brevdev/brev-cli/releases/download/v0.6.310/brev-cli_0.6.310_linux_amd64.tar.gz"
+          curl -fsSL -o /tmp/brev.tar.gz \
+            "https://github.com/brevdev/brev-cli/releases/download/v0.6.310/brev-cli_0.6.310_linux_amd64.tar.gz"
           tar -xzf /tmp/brev.tar.gz -C /usr/local/bin brev
           chmod +x /usr/local/bin/brev
+
+      - name: Authenticate Brev
+        run: |
+          mkdir -p ~/.brev
+          echo '{"step":1,"hasRunBrevShell":true,"hasRunBrevOpen":true}' > ~/.brev/onboarding_step.json
+          brev login --token "$BREV_API_TOKEN"
+        env:
+          BREV_API_TOKEN: ${{ secrets.BREV_API_TOKEN }}
+
+      - name: Deploy code to warm instance
+        if: matrix.mode == 'warm'
+        run: |
+          echo "Deploying to warm instance ${{ matrix.instance }} ..."
+          scripts/e2e-pool.sh deploy "${{ matrix.instance }}" "."
+        env:
+          BREV_API_TOKEN: ${{ secrets.BREV_API_TOKEN }}
 
       - name: Install dependencies
         run: npm install --ignore-scripts
 
-      - name: Run ephemeral Brev E2E
+      - name: Run Brev E2E
         env:
           BREV_API_TOKEN: ${{ secrets.BREV_API_TOKEN }}
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
-          INSTANCE_NAME: e2e-pr-${{ inputs.pr_number || github.run_id }}
-          TEST_SUITE: ${{ inputs.test_suite }}
+          INSTANCE_NAME: ${{ matrix.instance }}
+          TEST_SUITE: ${{ matrix.suite }}
           KEEP_ALIVE: ${{ inputs.keep_alive }}
+          WARM_INSTANCE: ${{ matrix.mode == 'warm' && matrix.instance || '' }}
         run: npx vitest run --project e2e-brev --reporter=verbose
+
+      - name: Cleanup instance
+        if: always()
+        run: |
+          if [ "${{ inputs.keep_alive }}" = "true" ]; then
+            echo "Instance ${{ matrix.instance }} kept alive for debugging."
+            echo "  brev refresh && ssh ${{ matrix.instance }}"
+            echo "  brev delete ${{ matrix.instance }}"
+            exit 0
+          fi
+
+          # Always destroy — warm pool warmer will replace consumed instances
+          brev set "$BREV_ORG" >/dev/null 2>&1 || true
+          brev delete "${{ matrix.instance }}" 2>&1 || true
+          echo "Instance ${{ matrix.instance }} destroyed."
+        env:
+          BREV_API_TOKEN: ${{ secrets.BREV_API_TOKEN }}
 
       - name: Update check run (completed)
         if: always() && inputs.pr_number != '' && env.CHECK_RUN_ID != ''
@@ -123,38 +262,49 @@ jobs:
             -X PATCH \
             -f status="completed" \
             -f conclusion="$CONCLUSION" \
-            -f "output[title]=Brev E2E (${{ inputs.test_suite }}): ${CONCLUSION}" \
-            -f "output[summary]=See workflow run for details."
-
-      - name: Post PR comment
-        if: always() && inputs.pr_number != ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if [ "${{ job.status }}" = "success" ]; then
-            EMOJI="✅"
-            STATUS="PASSED"
-          else
-            EMOJI="❌"
-            STATUS="FAILED"
-          fi
-          INSTANCE="e2e-pr-${{ inputs.pr_number || github.run_id }}"
-          BODY="${EMOJI} **Brev E2E** (${{ inputs.test_suite }}): **${STATUS}** on branch \`${{ inputs.branch }}\` — [See logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
-          if [ "${{ inputs.keep_alive }}" = "true" ]; then
-            BODY="${BODY}
-
-          > **Instance \`${INSTANCE}\` is still running.** To SSH in:
-          > \`\`\`
-          > brev refresh && ssh ${INSTANCE}
-          > \`\`\`
-          > When done, delete it: \`brev delete ${INSTANCE}\`"
-          fi
-          gh pr comment ${{ inputs.pr_number }} --repo ${{ github.repository }} --body "$BODY"
+            -f "output[title]=Brev E2E (${{ matrix.suite }}): ${CONCLUSION}" \
+            -f "output[summary]=Mode: ${{ matrix.mode }} · Instance: ${{ matrix.instance }}"
 
       - name: Upload test logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-brev-logs
+          name: e2e-brev-logs-${{ matrix.suite }}
           path: /tmp/brev-e2e-*.log
           if-no-files-found: ignore
+
+  # ---------------------------------------------------------------------------
+  # Job 3: Aggregate results and post PR comment.
+  # ---------------------------------------------------------------------------
+  report:
+    needs: [build-matrix, run-tests]
+    if: always() && inputs.pr_number != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Post PR comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Collect results from the matrix jobs
+          OVERALL="${{ needs.run-tests.result }}"
+          if [ "$OVERALL" = "success" ]; then
+            EMOJI="✅"
+            STATUS="ALL PASSED"
+          else
+            EMOJI="❌"
+            STATUS="FAILURES DETECTED"
+          fi
+
+          BODY="${EMOJI} **Brev E2E**: **${STATUS}** on branch \`${{ inputs.branch }}\`
+
+          | Suite | Status |
+          |-------|--------|"
+
+          # We can't easily iterate matrix results from here, so link to the run
+          BODY="${BODY}
+          | (see individual jobs) | [$OVERALL](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) |
+
+          > Mode: \`${{ inputs.pool_mode && 'warm-pool' || 'ephemeral' }}\` · [Full logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+
+          gh pr comment ${{ inputs.pr_number }} --repo ${{ github.repository }} --body "$BODY"

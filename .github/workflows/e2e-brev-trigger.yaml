@@ -1,0 +1,138 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# PR Comment Trigger — dispatches E2E tests when a maintainer posts /test-brev.
+#
+# Usage (in a PR comment):
+#   /test-brev                     → runs "full" suite
+#   /test-brev injection           → runs telegram-injection
+#   /test-brev creds               → runs credential-sanitization
+#   /test-brev injection creds     → runs both in parallel
+#   /test-brev all                 → runs all suites
+#
+# Only maintainers in the allowlist can trigger tests.
+# Only works on PR comments (not issue comments).
+
+name: e2e-brev-trigger
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+  actions: write
+
+jobs:
+  dispatch:
+    # Only run on PR comments (issue_comment fires for both PRs and issues)
+    if: >-
+      github.repository == 'jyaunches/NemoClaw' &&
+      github.event.issue.pull_request &&
+      startsWith(github.event.comment.body, '/test-brev')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Validate maintainer
+        id: auth
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          AUTHOR="${{ github.event.comment.user.login }}"
+          MAINTAINERS="ericksoa kjw3 jacobtomlinson cv jyaunches"
+
+          AUTHORIZED=false
+          for m in $MAINTAINERS; do
+            if [ "$AUTHOR" = "$m" ]; then
+              AUTHORIZED=true
+              break
+            fi
+          done
+
+          if ! $AUTHORIZED; then
+            echo "⚠ $AUTHOR is not in the maintainer allowlist. Ignoring."
+            echo "authorized=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "✅ $AUTHOR is authorized."
+          echo "authorized=true" >> "$GITHUB_OUTPUT"
+
+      - name: Acknowledge command
+        if: steps.auth.outputs.authorized == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Add 👀 reaction to acknowledge receipt
+          gh api repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions \
+            -f content="eyes" || true
+
+      - name: Parse suites and dispatch
+        if: steps.auth.outputs.authorized == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          COMMENT="${{ github.event.comment.body }}"
+          PR_NUMBER="${{ github.event.issue.number }}"
+
+          # Get PR head branch
+          PR_BRANCH=$(gh pr view "$PR_NUMBER" --repo "${{ github.repository }}" --json headRefName -q .headRefName)
+
+          # Strip the /test-brev prefix and parse args
+          ARGS=$(echo "$COMMENT" | sed 's|^/test-brev||' | xargs)
+
+          # Default to "full" if no args
+          if [ -z "$ARGS" ]; then
+            ARGS="full"
+          fi
+
+          # Resolve aliases → canonical suite names
+          SUITES=""
+          for arg in $ARGS; do
+            case "$arg" in
+              injection|telegram)      SUITES="${SUITES:+$SUITES,}telegram-injection" ;;
+              creds|credentials|sanitization) SUITES="${SUITES:+$SUITES,}credential-sanitization" ;;
+              full)                    SUITES="${SUITES:+$SUITES,}full" ;;
+              all)                     SUITES="all" ; break ;;
+              *)
+                echo "⚠ Unknown suite alias: $arg (ignoring)"
+                ;;
+            esac
+          done
+
+          if [ -z "$SUITES" ]; then
+            echo "No valid suites parsed from comment. Defaulting to 'full'."
+            SUITES="full"
+          fi
+
+          echo "PR:     #$PR_NUMBER"
+          echo "Branch: $PR_BRANCH"
+          echo "Suites: $SUITES"
+
+          # Dispatch the e2e-brev workflow
+          gh workflow run e2e-brev.yaml \
+            --repo "${{ github.repository }}" \
+            --ref "$PR_BRANCH" \
+            -f branch="$PR_BRANCH" \
+            -f pr_number="$PR_NUMBER" \
+            -f test_suite="$SUITES" \
+            -f pool_mode=true \
+            -f keep_alive=false
+
+          # Post confirmation comment
+          # Build a readable suite list
+          SUITE_LIST=$(echo "$SUITES" | tr ',' '\n' | sed 's/^/`/' | sed 's/$/`/' | tr '\n' ' ')
+
+          BODY="🚀 **E2E tests triggered** by @${{ github.event.comment.user.login }}
+
+          | | |
+          |---|---|
+          | **Suites** | ${SUITE_LIST} |
+          | **Branch** | \`${PR_BRANCH}\` |
+          | **Mode** | warm pool |
+
+          Tests are starting — results will be posted here when complete.
+          [Watch the run](${{ github.server_url }}/${{ github.repository }}/actions)"
+
+          gh pr comment "$PR_NUMBER" --repo "${{ github.repository }}" --body "$BODY"
