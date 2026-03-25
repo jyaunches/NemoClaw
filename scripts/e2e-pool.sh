@@ -4,25 +4,26 @@
 #
 # Warm pool management for Brev E2E test instances.
 #
+# Requires Brev CLI v0.6.322+ (--type, --startup-script, brev exec).
+#
 # Subcommands:
 #   status             — Full pool dashboard (instances, age, health, claims)
-#   list               — List warm instances (name, status, age)
+#   list               — List warm instances (name, status, build)
 #   count              — Count available warm instances
 #   claim              — Claim the first available warm instance
 #   health-check NAME  — Verify instance is healthy
-#   warm [COUNT]       — Start new warm instances to reach target pool size
-#   bootstrap NAME     — Bootstrap a created instance (Docker, Node, openshell, sandbox)
+#   warm [COUNT]       — Create and bootstrap warm instances to reach target
 #   cycle              — Destroy instances older than $INSTANCE_MAX_AGE_HOURS
 #   deploy NAME DIR    — Deploy branch code to a claimed instance
 #
 # Required:
-#   brev CLI on PATH, authenticated (brev login --token ...)
+#   brev CLI v0.6.322+ on PATH, authenticated (brev login --token ...)
 #
 # Environment:
 #   BREV_ORG                — Brev org for all operations (default: Nemoclaw CI/CD)
 #   WARM_POOL_SIZE          — Target number of warm instances (default: 3)
 #   WARM_POOL_PREFIX        — Instance name prefix (default: e2e-warm-)
-#   BREV_CPU                — Instance CPU spec (default: 4x16)
+#   BREV_INSTANCE_TYPE      — Instance type (default: n2d-standard-4, CPU @ $0.13/hr)
 #   INSTANCE_MAX_AGE_HOURS  — Max instance age before cycling (default: 24)
 #   GITHUB_RUN_ID           — CI run ID (used by claim)
 
@@ -34,7 +35,7 @@ set -euo pipefail
 BREV_ORG="${BREV_ORG:-Nemoclaw CI/CD}"
 WARM_POOL_SIZE="${WARM_POOL_SIZE:-3}"
 WARM_POOL_PREFIX="${WARM_POOL_PREFIX:-e2e-warm-}"
-BREV_CPU="${BREV_CPU:-4x16}"
+BREV_INSTANCE_TYPE="${BREV_INSTANCE_TYPE:-n2d-standard-4}"
 INSTANCE_MAX_AGE_HOURS="${INSTANCE_MAX_AGE_HOURS:-24}"
 
 # ---------------------------------------------------------------------------
@@ -57,20 +58,19 @@ fail() {
 # Helpers
 # ---------------------------------------------------------------------------
 
-# Ensure the active org is set before commands that don't support --org
-# (brev create, brev delete). This is critical — without it, instances
-# land in the wrong org as GPU instances at $0.72/hr instead of CPU at $0.13/hr.
+# Ensure the active org is set. Required before brev create/delete which
+# don't support --org. Without this, instances land in the wrong org.
 ensure_org() {
   info "Setting active org to '$BREV_ORG'"
   brev set "$BREV_ORG" >/dev/null 2>&1 || fail "Failed to set org to '$BREV_ORG'"
 }
 
-# Parse 'brev ls' output into structured lines.
-# brev ls output format (observed):
-#   NAME              STATUS   BUILD      SHELL  ID         MACHINE
-#   nemoclaw-e5db8f   RUNNING  COMPLETED  READY  3qthuu0ey  n2d-standard-4 (gpu)
+# Parse 'brev ls' output for warm pool instances.
+# v0.6.322 output format:
+#   NAME                     STATUS   BUILD      SHELL  ID         MACHINE          GPU
+#   e2e-warm-1774467060-001  RUNNING  COMPLETED  READY  4o7ci8dk7  n2d-standard-4   -
 #
-# We filter to warm pool instances and output: NAME STATUS BUILD
+# Output: NAME STATUS BUILD (one per line)
 brev_ls_warm() {
   brev ls --org "$BREV_ORG" 2>/dev/null \
     | grep -E "^\s*${WARM_POOL_PREFIX}" \
@@ -78,16 +78,12 @@ brev_ls_warm() {
     || true
 }
 
-# SSH to a Brev instance with standard options.
-# Brev configures SSH via ~/.ssh/config with ProxyCommand, so we can
-# ssh directly by instance name after 'brev refresh'.
-pool_ssh() {
+# Run a command on a remote instance via brev exec.
+# Unlike SSH, brev exec auto-resolves instances and waits for readiness.
+brev_exec() {
   local name="$1"
   shift
-  ssh -o StrictHostKeyChecking=no \
-    -o LogLevel=ERROR \
-    -o ConnectTimeout=15 \
-    "$name" "$@"
+  brev exec "$name" "$@"
 }
 
 # ---------------------------------------------------------------------------
@@ -100,20 +96,16 @@ cmd_list() {
 }
 
 # status — Full dashboard: all org instances + warm pool enrichment
-#
-# Shows every instance in the Brev org, then for warm pool instances
-# adds age, claim status, and health. This is the "what's going on?"
-# command you run to understand pool state at a glance.
 cmd_status() {
   local now
   now=$(date +%s)
 
   echo ""
-  echo "  Warm Pool Status  ·  org: $BREV_ORG  ·  target: $WARM_POOL_SIZE"
-  echo "  $(printf '─%.0s' {1..60})"
+  echo "  Warm Pool Status  ·  org: $BREV_ORG  ·  target: $WARM_POOL_SIZE  ·  type: $BREV_INSTANCE_TYPE"
+  echo "  $(printf '─%.0s' {1..68})"
   echo ""
 
-  # Get all instances in the org (not just warm-prefixed)
+  # Get all instances in the org
   local all_instances
   all_instances=$(brev ls --org "$BREV_ORG" 2>/dev/null | grep -E '^\s+\S+\s+(RUNNING|STARTING|STOPPING|STOPPED|DEPLOYING)' || true)
 
@@ -125,17 +117,13 @@ cmd_status() {
     return 0
   fi
 
-  # Refresh SSH config for health/claim checks
-  brev refresh >/dev/null 2>&1 || true
-
   local warm_ready=0
   local warm_building=0
   local warm_claimed=0
   local other_count=0
 
-  # Print header
   printf "  %-28s %-10s %-12s %-8s %-10s %s\n" "NAME" "STATUS" "BUILD" "AGE" "POOL" "DETAIL"
-  echo "  $(printf '─%.0s' {1..60})"
+  echo "  $(printf '─%.0s' {1..68})"
 
   while IFS= read -r line; do
     local name status build
@@ -143,7 +131,6 @@ cmd_status() {
     status=$(echo "$line" | awk '{print $2}')
     build=$(echo "$line" | awk '{print $3}')
 
-    # Is this a warm pool instance?
     if [[ "$name" == ${WARM_POOL_PREFIX}* ]]; then
       # Parse age from timestamp in name
       local ts age_str=""
@@ -157,7 +144,6 @@ cmd_status() {
         age_str="?"
       fi
 
-      # Determine pool state
       local pool_state="—"
       local detail=""
 
@@ -166,13 +152,12 @@ cmd_status() {
         detail="$status/$build"
         warm_building=$((warm_building + 1))
       else
-        # Check if claimed (try SSH, with short timeout).
-        # Redirect stdin to /dev/null — otherwise ssh eats the remaining
-        # lines from the while-read loop's heredoc.
+        # Check if claimed via brev exec (stdin redirected to avoid eating heredoc)
         local claimed_by=""
-        claimed_by=$(pool_ssh "$name" "cat /tmp/.e2e-claimed 2>/dev/null" </dev/null 2>/dev/null) || true
-
-        if [ -n "$claimed_by" ]; then
+        claimed_by=$(brev_exec "$name" "cat /tmp/.e2e-claimed 2>/dev/null" </dev/null 2>/dev/null) || true
+        # brev exec appends the instance name as the last line — strip it
+        claimed_by=$(echo "$claimed_by" | head -1)
+        if [ -n "$claimed_by" ] && [ "$claimed_by" != "$name" ]; then
           pool_state="CLAIMED"
           detail="run: $claimed_by"
           warm_claimed=$((warm_claimed + 1))
@@ -184,14 +169,13 @@ cmd_status() {
 
       printf "  %-28s %-10s %-12s %-8s %-10s %s\n" "$name" "$status" "$build" "$age_str" "$pool_state" "$detail"
     else
-      # Non-pool instance
       other_count=$((other_count + 1))
       printf "  %-28s %-10s %-12s %-8s %-10s %s\n" "$name" "$status" "$build" "—" "(other)" ""
     fi
   done <<<"$all_instances"
 
   echo ""
-  echo "  $(printf '─%.0s' {1..60})"
+  echo "  $(printf '─%.0s' {1..68})"
   printf "  %-12s %s\n" "Ready:" "$warm_ready / $WARM_POOL_SIZE"
   printf "  %-12s %s\n" "Building:" "$warm_building"
   printf "  %-12s %s\n" "Claimed:" "$warm_claimed"
@@ -199,8 +183,8 @@ cmd_status() {
     printf "  %-12s %s\n" "Other:" "$other_count (not managed by pool)"
   fi
 
-  local deficit=$((WARM_POOL_SIZE - warm_ready))
-  if [ "$deficit" -gt 0 ] && [ "$warm_building" -eq 0 ]; then
+  local deficit=$((WARM_POOL_SIZE - warm_ready - warm_building))
+  if [ "$deficit" -gt 0 ]; then
     echo ""
     echo "  ⚠  Pool below target. Run: e2e-pool.sh warm"
   fi
@@ -216,10 +200,8 @@ cmd_count() {
 
 # claim — Claim the first available warm instance
 #
-# 1. Lists warm instances with RUNNING status and COMPLETED build
-# 2. SSH into each, attempt to write claim file
-# 3. If file already exists (race), try next instance
-# 4. Output instance name on success, exit 1 if none available
+# Uses brev exec for atomic claim via bash noclobber.
+# Output: instance name on stdout, or exit 1 if none available.
 cmd_claim() {
   local run_id="${GITHUB_RUN_ID:-local-$$}"
   local instances
@@ -230,24 +212,20 @@ cmd_claim() {
     exit 1
   fi
 
-  # Refresh SSH config so instance names resolve
-  brev refresh >/dev/null 2>&1 || true
-
   for name in $instances; do
     info "Attempting to claim $name ..."
 
-    # Atomic claim: write only if file doesn't exist (bash noclobber).
-    # Use bash explicitly — default shell may be sh which handles noclobber differently.
-    local claim_cmd
-    claim_cmd="bash -c 'set -C; echo \"${run_id}\" > /tmp/.e2e-claimed 2>/dev/null && echo CLAIMED'"
-
+    # Atomic claim via noclobber — brev exec handles SSH resolution automatically
     local result
-    result=$(pool_ssh "$name" "$claim_cmd" 2>/dev/null) || true
+    result=$(brev_exec "$name" "bash -c 'set -C; echo \"${run_id}\" > /tmp/.e2e-claimed 2>/dev/null && echo CLAIMED'" 2>/dev/null) || true
 
-    if [ "$result" = "CLAIMED" ]; then
-      # Verify by reading back
+    # brev exec appends instance name as last line
+    local claim_status
+    claim_status=$(echo "$result" | head -1)
+
+    if [ "$claim_status" = "CLAIMED" ]; then
       local verify
-      verify=$(pool_ssh "$name" "cat /tmp/.e2e-claimed 2>/dev/null") || true
+      verify=$(brev_exec "$name" "cat /tmp/.e2e-claimed" 2>/dev/null | head -1) || true
       if [ "$verify" = "$run_id" ]; then
         info "Claimed $name for run $run_id"
         echo "$name"
@@ -256,7 +234,7 @@ cmd_claim() {
         warn "$name: claim verification failed (got '$verify', expected '$run_id')"
       fi
     else
-      warn "$name: already claimed or SSH failed, trying next..."
+      warn "$name: already claimed or exec failed, trying next..."
     fi
   done
 
@@ -268,29 +246,23 @@ cmd_claim() {
 cmd_health_check() {
   local name="${1:?Usage: e2e-pool.sh health-check <name>}"
 
-  # Refresh SSH config
-  brev refresh >/dev/null 2>&1 || true
-
-  # Check 1: SSH connectivity
-  if ! pool_ssh "$name" "echo ok" >/dev/null 2>&1; then
-    echo "UNHEALTHY: SSH connection failed"
+  # All checks via brev exec — no SSH config needed
+  if ! brev_exec "$name" "echo ok" >/dev/null 2>&1; then
+    echo "UNHEALTHY: brev exec connection failed"
     return 1
   fi
 
-  # Check 2: Docker running
-  if ! pool_ssh "$name" "docker info >/dev/null 2>&1" 2>/dev/null; then
+  if ! brev_exec "$name" "docker info >/dev/null 2>&1" 2>/dev/null; then
     echo "UNHEALTHY: Docker not running"
     return 1
   fi
 
-  # Check 3: openshell responds
-  if ! pool_ssh "$name" "command -v openshell >/dev/null 2>&1" 2>/dev/null; then
+  if ! brev_exec "$name" "command -v openshell >/dev/null 2>&1" 2>/dev/null; then
     echo "UNHEALTHY: openshell not found"
     return 1
   fi
 
-  # Check 4: Node.js present
-  if ! pool_ssh "$name" "node --version >/dev/null 2>&1" 2>/dev/null; then
+  if ! brev_exec "$name" "node --version >/dev/null 2>&1" 2>/dev/null; then
     echo "UNHEALTHY: Node.js not found"
     return 1
   fi
@@ -299,29 +271,44 @@ cmd_health_check() {
   return 0
 }
 
-# warm [COUNT] — Start new warm instances to reach target pool size
+# warm [COUNT] — Create and bootstrap warm instances to reach target pool size.
 #
-# Uses brev create + SSH bootstrap (not brev start --setup-script, which
-# was validated as non-functional for deploying launchables).
+# Uses brev create v0.6.322 with:
+#   --type n2d-standard-4   CPU instance at $0.13/hr (not GPU at $0.72/hr)
+#   --startup-script        Runs brev-setup.sh automatically after platform build
+#   --detached              Returns immediately; instances build in background
 #
-# Instance bootstrap happens asynchronously — this command starts the
-# creation and returns immediately. The pool warmer workflow is responsible
-# for polling until instances are ready.
+# The startup script handles the full bootstrap: Node.js, openshell, Docker
+# image build, sandbox creation. No separate bootstrap step needed.
 cmd_warm() {
   local target="${1:-$WARM_POOL_SIZE}"
   local current
   current=$(cmd_count)
 
-  local needed=$((target - current))
+  # Also count instances still building (don't double-create)
+  local building
+  building=$(brev_ls_warm | awk '$2 == "RUNNING" && $3 != "COMPLETED"' | wc -l)
+  building=$((building))
+
+  local available=$((current + building))
+  local needed=$((target - available))
   if [ "$needed" -le 0 ]; then
-    info "Pool already at target size ($current/$target)"
+    info "Pool at target ($current ready + $building building = $available / $target)"
     return 0
   fi
 
-  info "Pool has $current instances, target is $target — warming $needed more"
+  info "Pool has $current ready + $building building. Need $needed more to reach $target."
 
-  # Must set org before brev create (no --org flag on create)
   ensure_org
+
+  # Locate the startup script (brev-setup.sh)
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  local setup_script="$script_dir/brev-setup.sh"
+
+  if [ ! -f "$setup_script" ]; then
+    fail "Bootstrap script not found: $setup_script"
+  fi
 
   local timestamp
   timestamp=$(date +%s)
@@ -329,25 +316,23 @@ cmd_warm() {
   for i in $(seq 1 "$needed"); do
     local name
     name="${WARM_POOL_PREFIX}${timestamp}-$(printf '%03d' "$i")"
-    info "Creating instance $name (cpu: $BREV_CPU) ..."
+    info "Creating $name (type: $BREV_INSTANCE_TYPE, startup-script: brev-setup.sh) ..."
 
-    if brev create "$name" --cpu "$BREV_CPU" --detached >/dev/null 2>&1; then
-      info "Created $name — building in background"
+    if brev create "$name" \
+      --type "$BREV_INSTANCE_TYPE" \
+      --startup-script "@${setup_script}" \
+      --detached 2>&1 | grep -v "^$"; then
+      info "Created $name — bootstrapping in background"
       echo "$name"
     else
       warn "Failed to create $name — continuing with remaining"
     fi
   done
 
-  info "Warm-up initiated. Instances will take ~40 min to build."
-  info "Bootstrap via SSH must be run separately once instances reach RUNNING state."
+  info "Warm-up initiated. Instances will be fully ready when BUILD reaches COMPLETED."
 }
 
 # cycle — Destroy instances older than $INSTANCE_MAX_AGE_HOURS
-#
-# Brev ls doesn't expose creation timestamps directly, so we use instance
-# name encoding: e2e-warm-<unix_timestamp>-NNN. If timestamp is older
-# than threshold, destroy it.
 cmd_cycle() {
   local max_age_seconds=$((INSTANCE_MAX_AGE_HOURS * 3600))
   local now
@@ -363,7 +348,6 @@ cmd_cycle() {
   ensure_org
 
   for name in $instances; do
-    # Extract timestamp from name: e2e-warm-<timestamp>-NNN
     local ts
     ts=$(echo "$name" | sed -n "s/^${WARM_POOL_PREFIX}\([0-9]*\)-.*/\1/p")
 
@@ -388,96 +372,9 @@ cmd_cycle() {
   done
 }
 
-# bootstrap NAME — Bootstrap a newly created instance via SSH
-#
-# Once brev create finishes and the instance reaches RUNNING state,
-# this command SSHs in and runs brev-setup.sh to install Docker, Node.js,
-# openshell, and build the NemoClaw sandbox image.
-#
-# This is the slow step (~40 min) that warm pooling amortizes. The warmer
-# workflow calls this asynchronously after instance creation.
-#
-# Requires NVIDIA_API_KEY and GITHUB_TOKEN in the environment.
-cmd_bootstrap() {
-  local name="${1:?Usage: e2e-pool.sh bootstrap <name>}"
-
-  [ -n "${NVIDIA_API_KEY:-}" ] || fail "NVIDIA_API_KEY not set — required for bootstrap"
-  [ -n "${GITHUB_TOKEN:-}" ] || fail "GITHUB_TOKEN not set — required for bootstrap"
-
-  # Ensure org is set — brev refresh only configures SSH for the active org's instances
-  ensure_org
-
-  # Refresh SSH config so new instances are reachable
-  info "Refreshing Brev SSH config ..."
-  brev refresh 2>&1 || true
-
-  # Verify the instance appears in SSH config
-  if grep -q "$name" ~/.brev/ssh_config 2>/dev/null; then
-    info "Instance $name found in SSH config"
-  else
-    warn "Instance $name NOT in SSH config — SSH may fail"
-    info "Brev SSH config hosts:"
-    grep "^Host " ~/.brev/ssh_config 2>/dev/null | head -20 || true
-  fi
-
-  # Wait for SSH to become available (instance may still be provisioning)
-  info "Waiting for SSH on $name ..."
-  local max_attempts=60
-  local attempt=0
-  while [ "$attempt" -lt "$max_attempts" ]; do
-    if pool_ssh "$name" "echo ok" >/dev/null 2>&1; then
-      info "SSH ready on $name"
-      break
-    fi
-    attempt=$((attempt + 1))
-    if [ "$((attempt % 10))" -eq 0 ]; then
-      info "Still waiting for SSH on $name (attempt $attempt/$max_attempts) ..."
-      brev refresh 2>&1 || true
-    fi
-    sleep 5
-  done
-
-  if [ "$attempt" -ge "$max_attempts" ]; then
-    fail "SSH never became available on $name after $max_attempts attempts"
-  fi
-
-  local remote_home
-  remote_home=$(pool_ssh "$name" "echo \$HOME" 2>/dev/null) || fail "SSH failed for $name"
-  local remote_dir="${remote_home}/nemoclaw"
-
-  # Sync the repo (for brev-setup.sh and setup.sh)
-  local script_dir
-  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  local repo_dir
-  repo_dir="$(cd "$script_dir/.." && pwd)"
-
-  info "Rsyncing repo to $name:$remote_dir ..."
-  rsync -az --delete \
-    --exclude .git \
-    --exclude node_modules \
-    --exclude dist \
-    --exclude .venv \
-    "$repo_dir/" "$name:$remote_dir/" \
-    || fail "rsync failed"
-
-  # Run brev-setup.sh with secrets passed via stdin (not CLI args)
-  info "Running brev-setup.sh on $name (this takes ~40 min) ..."
-  local secret_preamble
-  secret_preamble="export NVIDIA_API_KEY='${NVIDIA_API_KEY}'; export GITHUB_TOKEN='${GITHUB_TOKEN}'; export NEMOCLAW_NON_INTERACTIVE=1; export NEMOCLAW_SANDBOX_NAME=e2e-test"
-
-  pool_ssh "$name" "eval '$secret_preamble' && cd $remote_dir && bash scripts/brev-setup.sh" \
-    || fail "Bootstrap failed on $name"
-
-  info "Bootstrap complete for $name"
-}
-
 # deploy NAME DIR — Deploy branch code to a claimed instance
 #
-# Steps:
-#   1. Wipe existing repo (clean slate)
-#   2. Rsync fresh code (exclude .git, node_modules, dist)
-#   3. Run npm ci (deterministic from lockfile)
-#   4. Verify deployment
+# Uses brev exec + brev copy (rsync via SSH as fallback).
 cmd_deploy() {
   local name="${1:?Usage: e2e-pool.sh deploy <name> <repo-dir>}"
   local repo_dir="${2:?Usage: e2e-pool.sh deploy <name> <repo-dir>}"
@@ -486,35 +383,35 @@ cmd_deploy() {
     fail "Repository directory not found: $repo_dir"
   fi
 
-  # Refresh SSH config
-  brev refresh >/dev/null 2>&1 || true
-
   local remote_home
-  remote_home=$(pool_ssh "$name" "echo \$HOME" 2>/dev/null) || fail "SSH failed for $name"
+  remote_home=$(brev_exec "$name" "echo \$HOME" 2>/dev/null | head -1) || fail "brev exec failed for $name"
   local remote_dir="${remote_home}/nemoclaw"
 
   # Step 1: Wipe existing repo
   info "Wiping $remote_dir on $name ..."
-  pool_ssh "$name" "rm -rf $remote_dir" || fail "Failed to wipe $remote_dir"
+  brev_exec "$name" "rm -rf $remote_dir" >/dev/null 2>&1 || fail "Failed to wipe $remote_dir"
 
-  # Step 2: Rsync fresh code
-  info "Rsyncing code from $repo_dir to $name:$remote_dir ..."
+  # Step 2: Rsync fresh code (brev exec doesn't support file transfer,
+  # so we use brev refresh + rsync as before)
+  info "Syncing code from $repo_dir to $name:$remote_dir ..."
+  brev refresh >/dev/null 2>&1 || true
   rsync -az --delete \
     --exclude .git \
     --exclude node_modules \
     --exclude dist \
     --exclude .venv \
+    -e "ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR" \
     "$repo_dir/" "$name:$remote_dir/" \
     || fail "rsync failed"
 
   # Step 3: Install dependencies
   info "Running npm ci on $name ..."
-  pool_ssh "$name" "cd $remote_dir && npm ci" \
+  brev_exec "$name" "cd $remote_dir && npm ci" >/dev/null 2>&1 \
     || fail "npm ci failed on $name"
 
   # Step 4: Verify deployment
   info "Verifying deployment on $name ..."
-  pool_ssh "$name" "cd $remote_dir && node -e 'require(\"./package.json\")'" \
+  brev_exec "$name" "cd $remote_dir && node -e 'require(\"./package.json\")'" >/dev/null 2>&1 \
     || fail "Deployment verification failed on $name"
 
   info "Code deployed to $name:$remote_dir"
@@ -533,8 +430,7 @@ Commands:
   count                  Count available warm instances
   claim                  Claim the first available warm instance
   health-check <name>    Verify instance is healthy
-  warm [count]           Start new warm instances to reach target pool size
-  bootstrap <name>       Bootstrap a created instance (Docker, Node, openshell, sandbox)
+  warm [count]           Create and bootstrap instances to reach target pool size
   cycle                  Destroy instances older than threshold
   deploy <name> <dir>    Deploy branch code to a claimed instance
 
@@ -542,9 +438,11 @@ Environment:
   BREV_ORG                Brev org (default: Nemoclaw CI/CD)
   WARM_POOL_SIZE          Target pool size (default: 3)
   WARM_POOL_PREFIX        Instance name prefix (default: e2e-warm-)
-  BREV_CPU                CPU spec (default: 4x16)
+  BREV_INSTANCE_TYPE      Instance type (default: n2d-standard-4)
   INSTANCE_MAX_AGE_HOURS  Max age in hours (default: 24)
   GITHUB_RUN_ID           CI run ID (used by claim)
+
+Requires Brev CLI v0.6.322+ (brev create --type, --startup-script, brev exec)
 EOF
   exit 1
 }
@@ -559,7 +457,6 @@ case "$command" in
   claim) cmd_claim ;;
   health-check) cmd_health_check "$@" ;;
   warm) cmd_warm "$@" ;;
-  bootstrap) cmd_bootstrap "$@" ;;
   cycle) cmd_cycle ;;
   deploy) cmd_deploy "$@" ;;
   -h | --help) usage ;;

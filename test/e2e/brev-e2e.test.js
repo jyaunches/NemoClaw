@@ -22,9 +22,9 @@
  *   INSTANCE_NAME    — Brev instance name (e.g. pr-156-test or e2e-warm-1234-001)
  *
  * Optional env vars:
- *   WARM_INSTANCE    — if set, use warm pool mode (skip create/bootstrap)
- *   TEST_SUITE       — which test to run: full, telegram-injection, credential-sanitization, all
- *   BREV_CPU         — CPU spec for ephemeral mode (default: 4x16)
+ *   WARM_INSTANCE       — if set, use warm pool mode (skip create/bootstrap)
+ *   TEST_SUITE          — which test to run: full, telegram-injection, credential-sanitization, all
+ *   BREV_INSTANCE_TYPE  — instance type for ephemeral mode (default: n2d-standard-4)
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -33,7 +33,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
-const BREV_CPU = process.env.BREV_CPU || "4x16";
+const BREV_INSTANCE_TYPE = process.env.BREV_INSTANCE_TYPE || "n2d-standard-4";
 const INSTANCE_NAME = process.env.INSTANCE_NAME;
 const WARM_INSTANCE = process.env.WARM_INSTANCE;
 const TEST_SUITE = process.env.TEST_SUITE || "full";
@@ -142,7 +142,7 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
       // ── Ephemeral mode (fallback) ───────────────────────────────────
       // Create instance from scratch — the original PR #813 flow.
       console.log(`\n  Ephemeral mode: creating instance "${INSTANCE_NAME}"`);
-      brev("create", INSTANCE_NAME, "--cpu", BREV_CPU, "--detached");
+      brev("create", INSTANCE_NAME, "--type", BREV_INSTANCE_TYPE, "--detached");
       instanceCreated = true;
 
       try { brev("refresh"); } catch { /* ignore */ }
