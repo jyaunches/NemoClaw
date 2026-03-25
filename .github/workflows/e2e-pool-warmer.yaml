@@ -7,8 +7,8 @@
 # manual dispatch. Cycles stale instances, health-checks the rest, destroys
 # unhealthy ones, and tops up to WARM_POOL_SIZE.
 #
-# Bootstrap is the slow step (~40 min). This workflow handles it so that
-# the test runner (e2e-brev.yaml) never has to wait.
+# Bootstrap is the slow step (~40 min). This workflow parallelizes it
+# across matrix jobs so multiple instances warm simultaneously.
 
 name: e2e-pool-warmer
 
@@ -35,18 +35,24 @@ env:
   INSTANCE_MAX_AGE_HOURS: "24"
 
 jobs:
+  # ---------------------------------------------------------------------------
+  # Job 1: Cycle stale instances, health-check, destroy unhealthy, create new
+  #         bare VMs, and output the list of instances needing bootstrap.
+  # ---------------------------------------------------------------------------
   maintain-pool:
     # TODO: restore to 'NVIDIA/NemoClaw' before merge (Phase 6)
     if: github.repository == 'jyaunches/NemoClaw'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 15
+    outputs:
+      bootstrap_matrix: ${{ steps.topup.outputs.bootstrap_matrix }}
+      needs_bootstrap: ${{ steps.topup.outputs.needs_bootstrap }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
 
       - name: Install Brev CLI
         run: |
-          # Pin to v0.6.310 — v0.6.322 removed --cpu flag and defaults to GPU
           curl -fsSL -o /tmp/brev.tar.gz \
             "https://github.com/brevdev/brev-cli/releases/download/v0.6.310/brev-cli_0.6.310_linux_amd64.tar.gz"
           tar -xzf /tmp/brev.tar.gz -C /usr/local/bin brev
@@ -82,7 +88,6 @@ jobs:
           echo "::group::Health-checking warm instances"
           INSTANCES=$(scripts/e2e-pool.sh list | awk '$2 == "RUNNING" && $3 == "COMPLETED" {print $1}')
           HEALTHY_COUNT=0
-          DESTROYED=""
 
           if [ -z "$INSTANCES" ]; then
             echo "No running warm instances to health-check."
@@ -98,7 +103,6 @@ jobs:
                 echo "  ❌ $name: $RESULT — destroying"
                 brev set "$BREV_ORG" >/dev/null 2>&1
                 brev delete "$name" 2>&1 || true
-                DESTROYED="${DESTROYED}${name}\n"
               fi
             done
           fi
@@ -106,7 +110,7 @@ jobs:
           echo "healthy_count=$HEALTHY_COUNT" >> "$GITHUB_OUTPUT"
           echo "::endgroup::"
 
-      - name: Top up pool
+      - name: Create new instances (VMs only — no bootstrap yet)
         id: topup
         run: |
           echo "::group::Topping up pool"
@@ -115,86 +119,152 @@ jobs:
 
           if [ "$NEEDED" -le 0 ]; then
             echo "Pool at target ($HEALTHY/$WARM_POOL_SIZE). No new instances needed."
-            echo "created=0" >> "$GITHUB_OUTPUT"
+            echo "needs_bootstrap=false" >> "$GITHUB_OUTPUT"
+            echo "bootstrap_matrix=[]" >> "$GITHUB_OUTPUT"
             echo "::endgroup::"
             exit 0
           fi
 
           echo "Pool has $HEALTHY healthy instances, target is $WARM_POOL_SIZE. Creating $NEEDED ..."
           CREATED=$(scripts/e2e-pool.sh warm "$WARM_POOL_SIZE") || true
-          CREATED_COUNT=$(echo "$CREATED" | grep -c . || true)
-          echo "Created $CREATED_COUNT instances."
-          if [ -n "$CREATED" ]; then
-            echo "$CREATED" | sed 's/^/  /'
-          fi
-          echo "created_names<<EOF" >> "$GITHUB_OUTPUT"
-          echo "$CREATED" >> "$GITHUB_OUTPUT"
-          echo "EOF" >> "$GITHUB_OUTPUT"
-          echo "created=$CREATED_COUNT" >> "$GITHUB_OUTPUT"
-          echo "::endgroup::"
 
-      - name: Bootstrap new instances
-        if: steps.topup.outputs.created != '0'
-        run: |
-          echo "::group::Bootstrapping new instances"
-          NAMES="${{ steps.topup.outputs.created_names }}"
-
-          if [ -z "$NAMES" ]; then
-            echo "No instances to bootstrap."
+          if [ -z "$CREATED" ]; then
+            echo "No instances created."
+            echo "needs_bootstrap=false" >> "$GITHUB_OUTPUT"
+            echo "bootstrap_matrix=[]" >> "$GITHUB_OUTPUT"
             echo "::endgroup::"
             exit 0
           fi
 
-          # Wait for all instances to reach RUNNING state before bootstrapping.
-          # brev create --detached returns immediately; the VM needs time to provision.
-          echo "Waiting for instances to reach RUNNING state ..."
+          echo "Created instances:"
+          echo "$CREATED" | sed 's/^/  /'
+
+          # Build a matrix for parallel bootstrap
+          MATRIX="["
+          FIRST=true
+          for name in $CREATED; do
+            if ! $FIRST; then MATRIX="${MATRIX},"; fi
+            FIRST=false
+            MATRIX="${MATRIX}{\"instance\":\"${name}\"}"
+          done
+          MATRIX="${MATRIX}]"
+
+          echo "Bootstrap matrix: $MATRIX"
+          echo "needs_bootstrap=true" >> "$GITHUB_OUTPUT"
+          echo "bootstrap_matrix=${MATRIX}" >> "$GITHUB_OUTPUT"
+          echo "::endgroup::"
+
+      - name: Pool status (pre-bootstrap)
+        if: always()
+        run: |
+          echo "## 🏊 Warm Pool Status (pre-bootstrap)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          scripts/e2e-pool.sh status 2>&1 | sed 's/\x1b\[[0-9;]*m//g' >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # Job 2: Bootstrap each new instance in parallel (~40 min each, all at once).
+  # ---------------------------------------------------------------------------
+  bootstrap:
+    needs: maintain-pool
+    if: needs.maintain-pool.outputs.needs_bootstrap == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      matrix:
+        include: ${{ fromJson(needs.maintain-pool.outputs.bootstrap_matrix) }}
+      fail-fast: false
+      max-parallel: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Brev CLI
+        run: |
+          curl -fsSL -o /tmp/brev.tar.gz \
+            "https://github.com/brevdev/brev-cli/releases/download/v0.6.310/brev-cli_0.6.310_linux_amd64.tar.gz"
+          tar -xzf /tmp/brev.tar.gz -C /usr/local/bin brev
+          chmod +x /usr/local/bin/brev
+
+      - name: Authenticate Brev
+        run: |
+          mkdir -p ~/.brev
+          echo '{"step":1,"hasRunBrevShell":true,"hasRunBrevOpen":true}' > ~/.brev/onboarding_step.json
+          brev login --token "$BREV_API_TOKEN"
+        env:
+          BREV_API_TOKEN: ${{ secrets.BREV_API_TOKEN }}
+
+      - name: Wait for instance to be RUNNING
+        run: |
+          INSTANCE="${{ matrix.instance }}"
+          echo "Waiting for $INSTANCE to reach RUNNING state ..."
           for attempt in $(seq 1 60); do
-            ALL_RUNNING=true
-            for name in $NAMES; do
-              STATUS=$(brev ls --org "$BREV_ORG" 2>/dev/null | grep -E "^\s*${name}\s" | awk '{print $2}')
-              if [ "$STATUS" != "RUNNING" ]; then
-                ALL_RUNNING=false
-                break
-              fi
-            done
-            if $ALL_RUNNING; then
-              echo "All instances RUNNING after ~$((attempt * 10))s"
-              break
+            STATUS=$(brev ls --org "$BREV_ORG" 2>/dev/null | grep -E "^\s*${INSTANCE}\s" | awk '{print $2}')
+            if [ "$STATUS" = "RUNNING" ]; then
+              echo "✅ $INSTANCE is RUNNING (after ~$((attempt * 10))s)"
+              exit 0
             fi
             if [ "$((attempt % 6))" -eq 0 ]; then
-              echo "Still waiting (attempt $attempt/60) ..."
+              echo "Still waiting... status=$STATUS (attempt $attempt/60)"
             fi
             sleep 10
           done
+          echo "❌ $INSTANCE did not reach RUNNING after 10 min"
+          exit 1
 
-          brev refresh || true
-
-          # Bootstrap each instance sequentially (each takes ~40 min)
-          BOOTSTRAP_FAILED=""
-          for name in $NAMES; do
-            echo "--- Bootstrapping $name ---"
-            if scripts/e2e-pool.sh bootstrap "$name"; then
-              echo "✅ $name bootstrapped"
-            else
-              echo "❌ $name bootstrap failed"
-              BOOTSTRAP_FAILED="${BOOTSTRAP_FAILED}${name}\n"
-            fi
-          done
-
-          if [ -n "$BOOTSTRAP_FAILED" ]; then
-            echo ""
-            echo "⚠ Some instances failed to bootstrap:"
-            echo -e "$BOOTSTRAP_FAILED" | sed 's/^/  /'
-          fi
-          echo "::endgroup::"
+      - name: Bootstrap instance
+        run: |
+          echo "Bootstrapping ${{ matrix.instance }} ..."
+          scripts/e2e-pool.sh bootstrap "${{ matrix.instance }}"
+          echo "✅ ${{ matrix.instance }} is warm and ready"
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
 
-      - name: Pool status summary
-        if: always()
+      - name: Health-check after bootstrap
+        if: success()
         run: |
-          echo "## 🏊 Warm Pool Status" >> "$GITHUB_STEP_SUMMARY"
+          RESULT=$(scripts/e2e-pool.sh health-check "${{ matrix.instance }}")
+          echo "${{ matrix.instance }}: $RESULT"
+
+      - name: Destroy on failure
+        if: failure()
+        run: |
+          echo "Bootstrap failed — destroying ${{ matrix.instance }}"
+          brev set "$BREV_ORG" >/dev/null 2>&1 || true
+          brev delete "${{ matrix.instance }}" 2>&1 || true
+
+  # ---------------------------------------------------------------------------
+  # Job 3: Final status report.
+  # ---------------------------------------------------------------------------
+  report:
+    needs: [maintain-pool, bootstrap]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Brev CLI
+        run: |
+          curl -fsSL -o /tmp/brev.tar.gz \
+            "https://github.com/brevdev/brev-cli/releases/download/v0.6.310/brev-cli_0.6.310_linux_amd64.tar.gz"
+          tar -xzf /tmp/brev.tar.gz -C /usr/local/bin brev
+          chmod +x /usr/local/bin/brev
+
+      - name: Authenticate Brev
+        run: |
+          mkdir -p ~/.brev
+          echo '{"step":1,"hasRunBrevShell":true,"hasRunBrevOpen":true}' > ~/.brev/onboarding_step.json
+          brev login --token "$BREV_API_TOKEN"
+        env:
+          BREV_API_TOKEN: ${{ secrets.BREV_API_TOKEN }}
+
+      - name: Pool status (final)
+        run: |
+          echo "## 🏊 Warm Pool Status (final)" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           scripts/e2e-pool.sh status 2>&1 | sed 's/\x1b\[[0-9;]*m//g' >> "$GITHUB_STEP_SUMMARY"
