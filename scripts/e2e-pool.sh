@@ -301,13 +301,15 @@ cmd_warm() {
 
   ensure_org
 
-  # Locate the startup script (brev-setup.sh)
+  # Locate the self-contained startup script.
+  # This script clones the repo, pre-pulls the GHCR base image, and runs
+  # brev-setup.sh — all without needing the repo to be pre-rsynced.
   local script_dir
   script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  local setup_script="$script_dir/brev-setup.sh"
+  local setup_script="$script_dir/e2e-warm-startup.sh"
 
   if [ ! -f "$setup_script" ]; then
-    fail "Bootstrap script not found: $setup_script"
+    fail "Startup script not found: $setup_script"
   fi
 
   local timestamp
@@ -316,7 +318,7 @@ cmd_warm() {
   for i in $(seq 1 "$needed"); do
     local name
     name="${WARM_POOL_PREFIX}${timestamp}-$(printf '%03d' "$i")"
-    info "Creating $name (type: $BREV_INSTANCE_TYPE, startup-script: brev-setup.sh) ..."
+    info "Creating $name (type: $BREV_INSTANCE_TYPE, startup-script: e2e-warm-startup.sh) ..."
 
     if brev create "$name" \
       --type "$BREV_INSTANCE_TYPE" \

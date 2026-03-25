@@ -3,14 +3,15 @@
 
 # Warm Pool Warmer — maintains a pool of pre-built Brev instances for E2E tests.
 #
-# Runs on schedule (every 30 min during business hours, weekdays) and on
-# manual dispatch. Cycles stale instances, health-checks the rest, destroys
-# unhealthy ones, and tops up to WARM_POOL_SIZE.
+# Two-phase instance creation:
+#   Phase 1 (startup-script): Clone repo, install Node.js, openshell, npm deps
+#   Phase 2 (finalize via brev exec): Pull GHCR base image, run setup.sh
 #
-# Requires Brev CLI v0.6.322+ for --type and --startup-script support.
-# Instances are created as CPU-only (n2d-standard-4, $0.13/hr) with
-# brev-setup.sh running automatically via --startup-script. No separate
-# bootstrap step needed — instances are warm once BUILD reaches COMPLETED.
+# Phase 1 runs automatically during Brev's BUILD phase via --startup-script.
+# Phase 2 runs from this workflow via brev exec once BUILD reaches COMPLETED.
+# Secrets (NVIDIA_API_KEY, GITHUB_TOKEN) are only needed in Phase 2.
+#
+# Requires Brev CLI v0.6.322+ for --type, --startup-script, brev exec.
 
 name: e2e-pool-warmer
 
@@ -35,15 +36,23 @@ env:
   WARM_POOL_PREFIX: "e2e-warm-"
   BREV_INSTANCE_TYPE: "n2d-standard-4"
   INSTANCE_MAX_AGE_HOURS: "24"
-  # Brev CLI v0.6.322 — required for --type, --startup-script, brev exec
   BREV_CLI_VERSION: "0.6.322"
+  BASE_IMAGE: "ghcr.io/nvidia/nemoclaw/sandbox-base:latest"
 
 jobs:
+  # ---------------------------------------------------------------------------
+  # Job 1: Cycle stale instances, health-check, create new instances.
+  #         New instances get --startup-script (Phase 1: tools + repo).
+  #         Outputs list of instances needing finalization (Phase 2).
+  # ---------------------------------------------------------------------------
   maintain-pool:
     # TODO: restore to 'NVIDIA/NemoClaw' before merge (Phase 6)
     if: github.repository == 'jyaunches/NemoClaw'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    outputs:
+      finalize_matrix: ${{ steps.topup.outputs.finalize_matrix }}
+      has_new: ${{ steps.topup.outputs.has_new }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -80,11 +89,9 @@ jobs:
           echo "::endgroup::"
 
       - name: Health-check surviving instances
-        id: health
         run: |
           echo "::group::Health-checking warm instances"
           INSTANCES=$(scripts/e2e-pool.sh list | awk '$2 == "RUNNING" && $3 == "COMPLETED" {print $1}')
-          HEALTHY_COUNT=0
 
           if [ -z "$INSTANCES" ]; then
             echo "No running warm instances to health-check."
@@ -94,7 +101,6 @@ jobs:
               RESULT=$(scripts/e2e-pool.sh health-check "$name") || true
               if [ "$RESULT" = "HEALTHY" ]; then
                 echo "  ✅ $name: HEALTHY"
-                HEALTHY_COUNT=$((HEALTHY_COUNT + 1))
               else
                 echo "  ❌ $name: $RESULT — destroying"
                 brev set "$BREV_ORG" >/dev/null 2>&1
@@ -102,24 +108,162 @@ jobs:
               fi
             done
           fi
-
-          echo "healthy_count=$HEALTHY_COUNT" >> "$GITHUB_OUTPUT"
           echo "::endgroup::"
 
       - name: Top up pool
+        id: topup
         run: |
           echo "::group::Topping up pool"
-          # warm command handles counting and creates with --startup-script
-          scripts/e2e-pool.sh warm "$WARM_POOL_SIZE" || true
+          CREATED=$(scripts/e2e-pool.sh warm "$WARM_POOL_SIZE") || true
+          if [ -n "$CREATED" ]; then
+            echo "New instances:"
+            echo "$CREATED" | sed 's/^/  /'
+            # Build JSON matrix for parallel finalization
+            MATRIX="{\"instance\":["
+            FIRST=true
+            for name in $CREATED; do
+              if ! $FIRST; then MATRIX="${MATRIX},"; fi
+              FIRST=false
+              MATRIX="${MATRIX}\"${name}\""
+            done
+            MATRIX="${MATRIX}]}"
+            echo "finalize_matrix=${MATRIX}" >> "$GITHUB_OUTPUT"
+            echo "has_new=true" >> "$GITHUB_OUTPUT"
+            echo "Matrix: $MATRIX"
+          else
+            echo "No new instances needed."
+            echo "finalize_matrix=" >> "$GITHUB_OUTPUT"
+            echo "has_new=false" >> "$GITHUB_OUTPUT"
+          fi
           echo "::endgroup::"
-        env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-          GITHUB_TOKEN: ${{ github.token }}
 
-      - name: Pool status summary
+      - name: Pool status (pre-finalize)
         if: always()
         run: |
-          echo "## 🏊 Warm Pool Status" >> "$GITHUB_STEP_SUMMARY"
+          echo "## 🏊 Warm Pool Status (pre-finalize)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          scripts/e2e-pool.sh status 2>&1 | sed 's/\x1b\[[0-9;]*m//g' >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # Job 2: Finalize new instances — wait for BUILD COMPLETED, then run
+  #         GHCR pull + setup.sh via brev exec (needs secrets).
+  # ---------------------------------------------------------------------------
+  finalize:
+    needs: maintain-pool
+    if: needs.maintain-pool.outputs.has_new == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      matrix: ${{ fromJson(needs.maintain-pool.outputs.finalize_matrix) }}
+      fail-fast: false
+      max-parallel: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Brev CLI
+        run: |
+          curl -fsSL -o /tmp/brev.tar.gz \
+            "https://github.com/brevdev/brev-cli/releases/download/v${BREV_CLI_VERSION}/brev-cli_${BREV_CLI_VERSION}_linux_amd64.tar.gz"
+          tar -xzf /tmp/brev.tar.gz -C /usr/local/bin brev
+          chmod +x /usr/local/bin/brev
+
+      - name: Authenticate Brev
+        run: |
+          mkdir -p ~/.brev
+          echo '{"step":1,"hasRunBrevShell":true,"hasRunBrevOpen":true}' > ~/.brev/onboarding_step.json
+          brev login --token "$BREV_API_TOKEN" </dev/null
+        env:
+          BREV_API_TOKEN: ${{ secrets.BREV_API_TOKEN }}
+
+      - name: Wait for BUILD COMPLETED
+        run: |
+          INSTANCE="${{ matrix.instance }}"
+          echo "Waiting for $INSTANCE to complete build (startup-script Phase 1) ..."
+          for attempt in $(seq 1 120); do
+            LINE=$(brev ls --org "$BREV_ORG" 2>/dev/null | grep -E "^\s*${INSTANCE}\s" || true)
+            STATUS=$(echo "$LINE" | awk '{print $2}')
+            BUILD=$(echo "$LINE" | awk '{print $3}')
+            if [ "$STATUS" = "RUNNING" ] && [ "$BUILD" = "COMPLETED" ]; then
+              echo "✅ $INSTANCE build completed (after ~$((attempt * 15))s)"
+              exit 0
+            fi
+            if [ -z "$STATUS" ]; then
+              echo "❌ $INSTANCE not found in brev ls"
+              exit 1
+            fi
+            if [ "$((attempt % 8))" -eq 0 ]; then
+              echo "Still waiting... status=$STATUS build=$BUILD (attempt $attempt/120)"
+            fi
+            sleep 15
+          done
+          echo "❌ $INSTANCE build did not complete after 30 min"
+          exit 1
+
+      - name: Finalize — pull GHCR base image
+        run: |
+          INSTANCE="${{ matrix.instance }}"
+          echo "Pulling GHCR base image on $INSTANCE ..."
+          # Pass GITHUB_TOKEN via brev exec stdin to avoid exposing in process args
+          brev exec "$INSTANCE" "echo '${{ github.token }}' | docker login ghcr.io -u nemoclaw-ci --password-stdin && docker pull $BASE_IMAGE" \
+            || echo "⚠ GHCR pull failed — setup.sh will build base locally"
+
+      - name: Finalize — run setup.sh
+        run: |
+          INSTANCE="${{ matrix.instance }}"
+          echo "Running setup.sh on $INSTANCE (starts gateway, builds sandbox) ..."
+          brev exec "$INSTANCE" "cd ~/nemoclaw && export NVIDIA_API_KEY='${{ secrets.NVIDIA_API_KEY }}' && export GITHUB_TOKEN='${{ github.token }}' && export NEMOCLAW_NON_INTERACTIVE=1 && export NEMOCLAW_SANDBOX_NAME=e2e-test && bash scripts/setup.sh"
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+
+      - name: Health-check after finalization
+        run: |
+          RESULT=$(scripts/e2e-pool.sh health-check "${{ matrix.instance }}")
+          echo "${{ matrix.instance }}: $RESULT"
+          if [ "$RESULT" != "HEALTHY" ]; then
+            echo "❌ Instance unhealthy after finalization"
+            exit 1
+          fi
+
+      - name: Destroy on failure
+        if: failure()
+        run: |
+          echo "Finalization failed — destroying ${{ matrix.instance }}"
+          brev set "$BREV_ORG" >/dev/null 2>&1 || true
+          brev delete "${{ matrix.instance }}" 2>&1 || true
+
+  # ---------------------------------------------------------------------------
+  # Job 3: Final status report.
+  # ---------------------------------------------------------------------------
+  report:
+    needs: [maintain-pool, finalize]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Brev CLI
+        run: |
+          curl -fsSL -o /tmp/brev.tar.gz \
+            "https://github.com/brevdev/brev-cli/releases/download/v${BREV_CLI_VERSION}/brev-cli_${BREV_CLI_VERSION}_linux_amd64.tar.gz"
+          tar -xzf /tmp/brev.tar.gz -C /usr/local/bin brev
+          chmod +x /usr/local/bin/brev
+
+      - name: Authenticate Brev
+        run: |
+          mkdir -p ~/.brev
+          echo '{"step":1,"hasRunBrevShell":true,"hasRunBrevOpen":true}' > ~/.brev/onboarding_step.json
+          brev login --token "$BREV_API_TOKEN" </dev/null
+        env:
+          BREV_API_TOKEN: ${{ secrets.BREV_API_TOKEN }}
+
+      - name: Pool status (final)
+        run: |
+          echo "## 🏊 Warm Pool Status (final)" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           scripts/e2e-pool.sh status 2>&1 | sed 's/\x1b\[[0-9;]*m//g' >> "$GITHUB_STEP_SUMMARY"
