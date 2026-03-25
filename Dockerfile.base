@@ -6,7 +6,47 @@
 # Built on main merges and pushed to GHCR. The production Dockerfile
 # layers PR-specific code (plugin, blueprint, config) on top.
 #
-# Rebuild triggers: changes to this file, or OpenClaw CLI version bump.
+# ── Why these layers are safe to cache ──────────────────────────────────
+#
+# Everything in this file is either pinned to an exact version or is
+# structural (users, directories, symlinks) that doesn't depend on
+# NemoClaw application code. Specifically:
+#
+#   node:22-slim        — pinned by sha256 digest, checked weekly by
+#                          docker-pin-check.yaml
+#   apt packages        — pinned to exact Debian bookworm versions
+#   gosu 1.19           — pinned release + sha256 checksum verification
+#   gateway/sandbox     — OS users and groups; names and UIDs are a
+#     users               stable contract with OpenShell
+#   .openclaw dirs      — directory structure + symlinks are dictated by
+#     + symlinks          the OpenClaw CLI layout; new dirs are additive
+#                          (add them here and rebuild)
+#   openclaw CLI        — pinned to exact npm version (e.g., 2026.3.11)
+#   pyyaml              — pinned to exact pip version (6.0.3)
+#
+# Nothing here references NemoClaw plugin source, blueprint files,
+# startup scripts, or build-time config (model, provider, auth token).
+# Those all live in the production Dockerfile's thin top layers.
+#
+# ── When to rebuild ─────────────────────────────────────────────────────
+#
+# The base-image.yaml workflow rebuilds automatically on main merges that
+# touch this file. You need to edit this file (triggering a rebuild) when:
+#
+#   1. OpenClaw CLI version bump    — change the openclaw@version below
+#   2. New apt package needed       — add it to the apt-get install list
+#   3. gosu upgrade                 — update URL, checksum, and version
+#   4. node:22-slim digest rotated  — update-docker-pin.sh updates both
+#                                      Dockerfile and Dockerfile.base
+#   5. New .openclaw subdirectory   — add mkdir + symlink below
+#   6. PyYAML or other pip dep bump — change the version below
+#
+# For ad-hoc rebuilds (e.g., security patch), use workflow_dispatch on
+# the base-image workflow.
+#
+# Expected rebuild frequency: every few weeks to months, driven mostly
+# by OpenClaw CLI version bumps or the weekly docker-pin-check.
+# ────────────────────────────────────────────────────────────────────────
 
 FROM node:22-slim@sha256:4f77a690f2f8946ab16fe1e791a3ac0667ae1c3575c3e4d0d4589e9ed5bfaf3d
 
