@@ -166,9 +166,11 @@ cmd_status() {
         detail="$status/$build"
         warm_building=$((warm_building + 1))
       else
-        # Check if claimed (try SSH, with short timeout)
+        # Check if claimed (try SSH, with short timeout).
+        # Redirect stdin to /dev/null — otherwise ssh eats the remaining
+        # lines from the while-read loop's heredoc.
         local claimed_by=""
-        claimed_by=$(pool_ssh "$name" "cat /tmp/.e2e-claimed 2>/dev/null" 2>/dev/null) || true
+        claimed_by=$(pool_ssh "$name" "cat /tmp/.e2e-claimed 2>/dev/null" </dev/null 2>/dev/null) || true
 
         if [ -n "$claimed_by" ]; then
           pool_state="CLAIMED"
@@ -329,7 +331,7 @@ cmd_warm() {
     name="${WARM_POOL_PREFIX}${timestamp}-$(printf '%03d' "$i")"
     info "Creating instance $name (cpu: $BREV_CPU) ..."
 
-    if brev create "$name" --cpu "$BREV_CPU" --detached 2>&1; then
+    if brev create "$name" --cpu "$BREV_CPU" --detached >/dev/null 2>&1; then
       info "Created $name — building in background"
       echo "$name"
     else
@@ -375,7 +377,7 @@ cmd_cycle() {
 
     if [ "$age_seconds" -gt "$max_age_seconds" ]; then
       info "Destroying $name (age: ${age_hours}h, threshold: ${INSTANCE_MAX_AGE_HOURS}h)"
-      if brev delete "$name" 2>&1; then
+      if brev delete "$name" >/dev/null 2>&1; then
         echo "$name"
       else
         warn "Failed to delete $name"
