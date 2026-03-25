@@ -68,6 +68,20 @@ curl -fsSL https://raw.githubusercontent.com/NVIDIA/OpenShell-Community/refs/hea
   CLI_RELEASE_TAG=v0.0.10 PLUGIN_REF=main COMMUNITY_REF=feat/brev-nemoclaw-plugin bash
 ```
 
+### CLI Limitations (Validated 2026-03-25)
+
+**`brev start --setup-script` does NOT replicate the launchable.** Tested:
+```bash
+brev start https://github.com/NVIDIA/NemoClaw \
+  --name e2e-warm-test-001 --cpu 4x16 \
+  --setup-script "https://raw.githubusercontent.com/.../launch-nemoclaw.sh"
+```
+Result: bare Ubuntu VM with nothing installed. The `--setup-script` flag was silently ignored. The `--cpu` flag was also ignored — it created a GPU instance ($0.72/hr) instead.
+
+**Implication**: Warm instances must be bootstrapped via `brev create --org "Nemoclaw CI/CD" --cpu 4x16` followed by SSH-based `brev-setup.sh` execution (the #813 approach), NOT via `brev start` with the launchable URL. The launchable is only deployable through the Brev web UI.
+
+**Org must be explicit**: Without `--org`, instances land in the user's active org. The `BREV_API_TOKEN` from CI landed instances in `nca-40221` (GPU-default org) instead of `Nemoclaw CI/CD` (CPU-default org). Six orphaned GPU instances at $0.72/hr each were discovered and cleaned up.
+
 ## Architecture Design
 
 ### The Warm Pool Model
@@ -206,10 +220,23 @@ Instances are destroyed and rebuilt daily, so stopped-instance storage costs are
 | `NVIDIA_API_KEY` | Inference config during sandbox setup | Yes |
 | `BREV_API_TOKEN` | Brev CLI headless auth | Yes (from #813) |
 
+### Brev Organization
+
+**All instances MUST be created in the `Nemoclaw CI/CD` org.**
+
+| Org Name | Org ID | Purpose |
+|----------|--------|---------|
+| `Nemoclaw CI/CD` | `org-3BMXNQMeQUOorcczhv3RX6znPCa` | E2E test instances |
+
+Every `brev` CLI command that creates, lists, or deletes instances must include `--org "Nemoclaw CI/CD"`. Without this, instances end up in whichever org the `BREV_API_TOKEN` user has set as active — which led to 6 orphaned GPU instances at $0.72/hr in the wrong org during initial development.
+
+**Lesson learned from PR #813**: The merged workflow did not specify `--org`, causing instances to land in `nca-40221` as GPU instances (T4, $0.72/hr) instead of CPU instances ($0.13/hr) in the CI/CD org. This must be fixed.
+
 ### Environment Variables (Workflow)
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
+| `BREV_ORG` | Brev org for all instance operations | `Nemoclaw CI/CD` |
 | `WARM_POOL_SIZE` | Target number of warm instances | `3` |
 | `WARM_POOL_PREFIX` | Instance name prefix | `e2e-warm-` |
 | `BREV_CPU` | Instance CPU spec | `4x16` |
@@ -246,10 +273,12 @@ Instances are destroyed and rebuilt daily, so stopped-instance storage costs are
 
 **Design**:
 
+All subcommands pass `--org "$BREV_ORG"` (default: `Nemoclaw CI/CD`) to every `brev` CLI call. This is non-negotiable — missing `--org` caused $0.72/hr GPU orphans during development.
+
 Subcommands:
 
 - `e2e-pool.sh list` — List warm instances (name, status, age)
-  - Runs `brev ls`, filters by `$WARM_POOL_PREFIX`, parses output
+  - Runs `brev ls --org "$BREV_ORG"`, filters by `$WARM_POOL_PREFIX`, parses output
   - Output: one instance per line, format: `NAME STATUS AGE_MINUTES`
   - Exit 0 always (empty list is valid)
 
