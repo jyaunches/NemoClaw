@@ -192,8 +192,17 @@ if [ "$(id -u)" -ne 0 ]; then
     exec "${NEMOCLAW_CMD[@]}"
   fi
 
+  # In non-root mode, detach gateway stdout/stderr from the sandbox-create
+  # stream so openshell sandbox create can return once the container is ready.
+  touch /tmp/gateway.log
+  chmod 600 /tmp/gateway.log
+
+  # Separate log for auto-pair in non-root mode as well.
+  touch /tmp/auto-pair.log
+  chmod 600 /tmp/auto-pair.log
+
   # Start gateway in background, auto-pair, then wait
-  "$OPENCLAW" gateway run &
+  nohup "$OPENCLAW" gateway run >/tmp/gateway.log 2>&1 &
   GATEWAY_PID=$!
   echo "[gateway] openclaw gateway launched (pid $GATEWAY_PID)"
   start_auto_pair
