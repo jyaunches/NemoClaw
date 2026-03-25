@@ -15,7 +15,7 @@ Thumbs.db
 
 # Project-specific
 draft_newsletter_*
-specs/
+# specs/ — tracked for warm-pool-e2e spec
 vdr-notes/
 
 # Security: secrets, credentials, and keys
