@@ -404,8 +404,21 @@ cmd_bootstrap() {
   [ -n "${NVIDIA_API_KEY:-}" ] || fail "NVIDIA_API_KEY not set — required for bootstrap"
   [ -n "${GITHUB_TOKEN:-}" ] || fail "GITHUB_TOKEN not set — required for bootstrap"
 
-  # Refresh SSH config
-  brev refresh >/dev/null 2>&1 || true
+  # Ensure org is set — brev refresh only configures SSH for the active org's instances
+  ensure_org
+
+  # Refresh SSH config so new instances are reachable
+  info "Refreshing Brev SSH config ..."
+  brev refresh 2>&1 || true
+
+  # Verify the instance appears in SSH config
+  if grep -q "$name" ~/.brev/ssh_config 2>/dev/null; then
+    info "Instance $name found in SSH config"
+  else
+    warn "Instance $name NOT in SSH config — SSH may fail"
+    info "Brev SSH config hosts:"
+    grep "^Host " ~/.brev/ssh_config 2>/dev/null | head -20 || true
+  fi
 
   # Wait for SSH to become available (instance may still be provisioning)
   info "Waiting for SSH on $name ..."
@@ -419,7 +432,7 @@ cmd_bootstrap() {
     attempt=$((attempt + 1))
     if [ "$((attempt % 10))" -eq 0 ]; then
       info "Still waiting for SSH on $name (attempt $attempt/$max_attempts) ..."
-      brev refresh >/dev/null 2>&1 || true
+      brev refresh 2>&1 || true
     fi
     sleep 5
   done
