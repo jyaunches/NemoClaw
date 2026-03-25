@@ -323,7 +323,7 @@ cmd_warm() {
     if brev create "$name" \
       --type "$BREV_INSTANCE_TYPE" \
       --startup-script "@${setup_script}" \
-      --detached 2>&1 | grep -v "^$"; then
+      --detached >&2 2>&1; then
       info "Created $name — bootstrapping in background"
       echo "$name"
     else
