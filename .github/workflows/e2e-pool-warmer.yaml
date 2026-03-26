@@ -205,18 +205,27 @@ jobs:
           echo "❌ $INSTANCE build did not complete after 30 min"
           exit 1
 
-      - name: Finalize — pull GHCR base image
+      - name: Finalize — pull GHCR images
         run: |
           INSTANCE="${{ matrix.instance }}"
-          echo "Pulling GHCR base image on $INSTANCE ..."
-          # Pass GITHUB_TOKEN via brev exec stdin to avoid exposing in process args
-          brev exec "$INSTANCE" "echo '${{ github.token }}' | docker login ghcr.io -u nemoclaw-ci --password-stdin && docker pull $BASE_IMAGE" \
-            || echo "⚠ GHCR pull failed — setup.sh will build base locally"
+          echo "Logging into GHCR and pulling images on $INSTANCE ..."
+
+          # Get the openshell version from the instance to determine gateway image tag
+          OS_VERSION=$(brev exec "$INSTANCE" "openshell -V 2>/dev/null | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' || echo '0.0.16'" | head -1)
+          GATEWAY_IMAGE="ghcr.io/nvidia/openshell/cluster:${OS_VERSION}"
+
+          echo "Pulling: $BASE_IMAGE (sandbox base)"
+          echo "Pulling: $GATEWAY_IMAGE (openshell gateway)"
+
+          brev exec "$INSTANCE" "echo '${{ github.token }}' | docker login ghcr.io -u nemoclaw-ci --password-stdin && docker pull $BASE_IMAGE && docker pull $GATEWAY_IMAGE" \
+            || echo "⚠ GHCR pull failed — setup.sh will build/pull at runtime (slower)"
 
       - name: Finalize — run setup.sh
         run: |
           INSTANCE="${{ matrix.instance }}"
           echo "Running setup.sh on $INSTANCE (starts gateway, builds sandbox) ..."
+          # Docker login from the previous step persists in ~/.docker/config.json
+          # so setup.sh can pull GHCR images (gateway, base) without re-authing.
           brev exec "$INSTANCE" "cd ~/nemoclaw && export NVIDIA_API_KEY='${{ secrets.NVIDIA_API_KEY }}' && export GITHUB_TOKEN='${{ github.token }}' && export NEMOCLAW_NON_INTERACTIVE=1 && export NEMOCLAW_SANDBOX_NAME=e2e-test && bash scripts/setup.sh"
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
