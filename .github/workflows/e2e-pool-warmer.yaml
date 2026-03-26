@@ -178,6 +178,9 @@ jobs:
         env:
           BREV_API_TOKEN: ${{ secrets.BREV_API_TOKEN }}
 
+      - name: Set active org
+        run: brev set "$BREV_ORG"
+
       - name: Wait for BUILD COMPLETED
         run: |
           INSTANCE="${{ matrix.instance }}"

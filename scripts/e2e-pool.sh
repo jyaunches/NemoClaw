@@ -80,9 +80,12 @@ brev_ls_warm() {
 
 # Run a command on a remote instance via brev exec.
 # Unlike SSH, brev exec auto-resolves instances and waits for readiness.
+# Requires the active org to be set (brev exec has no --org flag).
 brev_exec() {
   local name="$1"
   shift
+  # Ensure org is set — brev exec uses active org for instance lookup
+  brev set "$BREV_ORG" >/dev/null 2>&1 || true
   brev exec "$name" "$@"
 }
 
