@@ -116,6 +116,11 @@ else
 fi
 GATEWAY_ARGS=(--name nemoclaw)
 command -v nvidia-smi >/dev/null 2>&1 && GATEWAY_ARGS+=(--gpu)
+# Pass GHCR token so k3s can pull openshell images from the private registry.
+# Without this, the gateway pod fails with ErrImagePull / 403 Forbidden.
+if [ -n "${GITHUB_TOKEN:-}" ]; then
+  GATEWAY_ARGS+=(--registry-token "${GITHUB_TOKEN}")
+fi
 
 # Retry gateway start — the k3s cluster inside the container needs ~60-70s
 # to become healthy on CPU-only instances, but `openshell gateway start`
