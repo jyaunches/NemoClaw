@@ -34,7 +34,7 @@ env:
   BREV_ORG: "Nemoclaw CI/CD"
   WARM_POOL_SIZE: "3"
   WARM_POOL_PREFIX: "e2e-warm-"
-  BREV_INSTANCE_TYPE: "n2d-standard-4"
+  BREV_INSTANCE_TYPE: "n2d-standard-8"
   INSTANCE_MAX_AGE_HOURS: "24"
   BREV_CLI_VERSION: "0.6.322"
   BASE_IMAGE: "ghcr.io/nvidia/nemoclaw/sandbox-base:latest"
@@ -205,28 +205,15 @@ jobs:
           echo "❌ $INSTANCE build did not complete after 30 min"
           exit 1
 
-      - name: Finalize — pull GHCR images
+      - name: Finalize — pull images + run setup.sh
         run: |
           INSTANCE="${{ matrix.instance }}"
-          echo "Logging into GHCR and pulling images on $INSTANCE ..."
-
-          # Get the openshell version from the instance to determine gateway image tag
-          OS_VERSION=$(brev exec "$INSTANCE" "openshell -V 2>/dev/null | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' || echo '0.0.16'" | head -1)
-          GATEWAY_IMAGE="ghcr.io/nvidia/openshell/cluster:${OS_VERSION}"
-
-          echo "Pulling: $BASE_IMAGE (sandbox base)"
-          echo "Pulling: $GATEWAY_IMAGE (openshell gateway)"
-
-          brev exec "$INSTANCE" "echo '${{ github.token }}' | docker login ghcr.io -u nemoclaw-ci --password-stdin && docker pull $BASE_IMAGE && docker pull $GATEWAY_IMAGE" \
-            || echo "⚠ GHCR pull failed — setup.sh will build/pull at runtime (slower)"
-
-      - name: Finalize — run setup.sh
-        run: |
-          INSTANCE="${{ matrix.instance }}"
-          echo "Running setup.sh on $INSTANCE (starts gateway, builds sandbox) ..."
-          # Docker login from the previous step persists in ~/.docker/config.json
-          # so setup.sh can pull GHCR images (gateway, base) without re-authing.
-          brev exec "$INSTANCE" "cd ~/nemoclaw && export NVIDIA_API_KEY='${{ secrets.NVIDIA_API_KEY }}' && export GITHUB_TOKEN='${{ github.token }}' && export NEMOCLAW_NON_INTERACTIVE=1 && export NEMOCLAW_SANDBOX_NAME=e2e-test && bash scripts/setup.sh"
+          echo "Running finalization script on $INSTANCE ..."
+          # Run the finalize script as a file on the instance — avoids brev exec
+          # mangling multi-line commands. The script handles GHCR login, image
+          # pulls, and setup.sh (gateway + sandbox).
+          # sg docker ensures docker group is active in the SSH session.
+          brev exec "$INSTANCE" "export NVIDIA_API_KEY='${{ secrets.NVIDIA_API_KEY }}' GITHUB_TOKEN='${{ github.token }}' && sg docker -c 'bash ~/nemoclaw/scripts/e2e-warm-finalize.sh'"
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
 

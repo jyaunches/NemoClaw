@@ -72,7 +72,7 @@ concurrency:
 
 env:
   BREV_ORG: "Nemoclaw CI/CD"
-  BREV_INSTANCE_TYPE: "n2d-standard-4"
+  BREV_INSTANCE_TYPE: "n2d-standard-8"
   # Brev CLI v0.6.322 — required for --type, --startup-script, brev exec
   BREV_CLI_VERSION: "0.6.322"
 

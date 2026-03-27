@@ -35,7 +35,7 @@ set -euo pipefail
 BREV_ORG="${BREV_ORG:-Nemoclaw CI/CD}"
 WARM_POOL_SIZE="${WARM_POOL_SIZE:-3}"
 WARM_POOL_PREFIX="${WARM_POOL_PREFIX:-e2e-warm-}"
-BREV_INSTANCE_TYPE="${BREV_INSTANCE_TYPE:-n2d-standard-4}"
+BREV_INSTANCE_TYPE="${BREV_INSTANCE_TYPE:-n2d-standard-8}"
 INSTANCE_MAX_AGE_HOURS="${INSTANCE_MAX_AGE_HOURS:-24}"
 
 # ---------------------------------------------------------------------------

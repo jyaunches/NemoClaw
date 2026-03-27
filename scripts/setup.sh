@@ -106,9 +106,14 @@ elif [[ -n "$OPEN_SHELL_VERSION_RAW" ]]; then
   warn "Skipping OpenShell gateway image pinning."
 fi
 
-# 1. Gateway — always start fresh to avoid stale state
-info "Starting OpenShell gateway..."
-openshell gateway destroy -g nemoclaw >/dev/null 2>&1 || true
+# 1. Gateway — reuse if healthy, otherwise start fresh
+info "Checking OpenShell gateway..."
+if openshell status 2>&1 | grep -q "Connected"; then
+  info "Gateway already running and connected — reusing"
+else
+  info "Starting OpenShell gateway..."
+  openshell gateway destroy -g nemoclaw >/dev/null 2>&1 || true
+fi
 GATEWAY_ARGS=(--name nemoclaw)
 command -v nvidia-smi >/dev/null 2>&1 && GATEWAY_ARGS+=(--gpu)
 
@@ -117,26 +122,35 @@ command -v nvidia-smi >/dev/null 2>&1 && GATEWAY_ARGS+=(--gpu)
 # may time out before that. On retry, the k3s volume state is cached so
 # startup is faster.
 GATEWAY_STARTED=false
+# Skip if already connected (reuse from above)
+if openshell status 2>&1 | grep -q "Connected"; then
+  GATEWAY_STARTED=true
+fi
+
 for attempt in 1 2 3; do
+  $GATEWAY_STARTED && break
   info "Gateway start attempt $attempt/3..."
-  if openshell gateway start "${GATEWAY_ARGS[@]}" 2>&1 | grep -E "Gateway|✓|Error|error"; then
+  # Capture output and exit code separately — piping through grep loses
+  # the real exit code and prevents retries.
+  set +e
+  GW_OUTPUT=$(openshell gateway start "${GATEWAY_ARGS[@]}" 2>&1)
+  GW_RC=$?
+  set -e
+  echo "$GW_OUTPUT" | grep -E "Gateway|✓|Error|error" || true
+
+  # Check if gateway is actually connected (not just whether the command exited)
+  if openshell status 2>&1 | grep -q "Connected"; then
+    info "Gateway is connected"
     GATEWAY_STARTED=true
     break
   fi
-  warn "Gateway start attempt $attempt failed. Waiting 15s before retry..."
-  # Don't destroy between retries — the k3s container may still be starting
-  # and the Docker volume state carries over.
-  sleep 15
+
+  warn "Gateway start attempt $attempt failed (exit $GW_RC). Waiting 30s before retry..."
+  sleep 30
 done
 
 if ! $GATEWAY_STARTED; then
-  # Final check — the gateway may have come up between attempts
-  if openshell status 2>&1 | grep -q "Connected"; then
-    info "Gateway came up after retries"
-    GATEWAY_STARTED=true
-  else
-    fail "Gateway failed to start after 3 attempts. Check 'docker logs openshell-cluster-nemoclaw'."
-  fi
+  fail "Gateway failed to start after 3 attempts. Check 'docker logs openshell-cluster-nemoclaw'."
 fi
 
 info "Gateway is healthy"
