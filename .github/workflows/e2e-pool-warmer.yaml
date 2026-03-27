@@ -222,7 +222,7 @@ jobs:
         run: |
           INSTANCE="${{ matrix.instance }}"
           echo "Running finalization script on $INSTANCE ..."
-          brev exec "$INSTANCE" "export NVIDIA_API_KEY='${{ secrets.NVIDIA_API_KEY }}' GITHUB_TOKEN='${{ github.token }}' && sg docker -c 'bash ~/nemoclaw/scripts/e2e-warm-finalize.sh'"
+          brev exec "$INSTANCE" "sg docker -c 'export NVIDIA_API_KEY=\"${{ secrets.NVIDIA_API_KEY }}\" && export GITHUB_TOKEN=\"${{ github.token }}\" && bash ~/nemoclaw/scripts/e2e-warm-finalize.sh'"
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
 
