@@ -222,7 +222,11 @@ jobs:
         run: |
           INSTANCE="${{ matrix.instance }}"
           echo "Running finalization script on $INSTANCE ..."
-          brev exec "$INSTANCE" "sg docker -c 'export NVIDIA_API_KEY=\"${{ secrets.NVIDIA_API_KEY }}\" && export GITHUB_TOKEN=\"${{ github.token }}\" && bash ~/nemoclaw/scripts/e2e-warm-finalize.sh'"
+          # GHCR_TOKEN is a PAT with read:packages scope for NVIDIA org.
+          # On NVIDIA/NemoClaw, github.token has packages:read natively.
+          # On forks, we need a separate PAT since github.token is scoped to the fork.
+          REGISTRY_TOKEN="${{ secrets.GHCR_TOKEN || github.token }}"
+          brev exec "$INSTANCE" "sg docker -c 'export NVIDIA_API_KEY=\"${{ secrets.NVIDIA_API_KEY }}\" && export GITHUB_TOKEN=\"${REGISTRY_TOKEN}\" && bash ~/nemoclaw/scripts/e2e-warm-finalize.sh'"
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
 
