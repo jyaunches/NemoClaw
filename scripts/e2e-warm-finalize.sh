@@ -56,8 +56,10 @@ fi
 info "Running setup.sh (gateway + sandbox)..."
 cd "$REPO_DIR"
 export NVIDIA_API_KEY
+export GITHUB_TOKEN
 export NEMOCLAW_NON_INTERACTIVE=1
 export NEMOCLAW_SANDBOX_NAME=e2e-test
+info "GITHUB_TOKEN length: ${#GITHUB_TOKEN}"
 bash scripts/setup.sh
 
 info "Finalization complete — instance is warm and ready!"
