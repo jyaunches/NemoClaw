@@ -111,16 +111,34 @@ info "Starting OpenShell gateway..."
 openshell gateway destroy -g nemoclaw >/dev/null 2>&1 || true
 GATEWAY_ARGS=(--name nemoclaw)
 command -v nvidia-smi >/dev/null 2>&1 && GATEWAY_ARGS+=(--gpu)
-openshell gateway start "${GATEWAY_ARGS[@]}" 2>&1 | grep -E "Gateway|✓|Error|error" || true
 
-# Verify gateway is actually healthy (may need a moment after start)
-for i in 1 2 3 4 5; do
-  if openshell status 2>&1 | grep -q "Connected"; then
+# Retry gateway start — the k3s cluster inside the container needs ~60-70s
+# to become healthy on CPU-only instances, but `openshell gateway start`
+# may time out before that. On retry, the k3s volume state is cached so
+# startup is faster.
+GATEWAY_STARTED=false
+for attempt in 1 2 3; do
+  info "Gateway start attempt $attempt/3..."
+  if openshell gateway start "${GATEWAY_ARGS[@]}" 2>&1 | grep -E "Gateway|✓|Error|error"; then
+    GATEWAY_STARTED=true
     break
   fi
-  [ "$i" -eq 5 ] && fail "Gateway failed to start. Check 'openshell gateway info' and Docker logs."
-  sleep 2
+  warn "Gateway start attempt $attempt failed. Waiting 15s before retry..."
+  # Don't destroy between retries — the k3s container may still be starting
+  # and the Docker volume state carries over.
+  sleep 15
 done
+
+if ! $GATEWAY_STARTED; then
+  # Final check — the gateway may have come up between attempts
+  if openshell status 2>&1 | grep -q "Connected"; then
+    info "Gateway came up after retries"
+    GATEWAY_STARTED=true
+  else
+    fail "Gateway failed to start after 3 attempts. Check 'docker logs openshell-cluster-nemoclaw'."
+  fi
+fi
+
 info "Gateway is healthy"
 
 # 2. CoreDNS fix (Colima only)
