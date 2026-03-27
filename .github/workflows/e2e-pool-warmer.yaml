@@ -209,10 +209,12 @@ jobs:
         run: |
           INSTANCE="${{ matrix.instance }}"
           # The startup script clones main, but e2e-warm-finalize.sh and the
-          # updated setup.sh only exist on this branch. Upload them.
+          # updated setup.sh only exist on this branch. Upload via brev refresh + rsync.
           echo "Uploading scripts to $INSTANCE ..."
-          brev exec "$INSTANCE" "cat > ~/nemoclaw/scripts/e2e-warm-finalize.sh" < scripts/e2e-warm-finalize.sh
-          brev exec "$INSTANCE" "cat > ~/nemoclaw/scripts/setup.sh" < scripts/setup.sh
+          brev refresh || true
+          rsync -az -e "ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR" \
+            scripts/e2e-warm-finalize.sh scripts/setup.sh \
+            "$INSTANCE":~/nemoclaw/scripts/
           brev exec "$INSTANCE" "chmod +x ~/nemoclaw/scripts/e2e-warm-finalize.sh"
           echo "Scripts uploaded."
 
