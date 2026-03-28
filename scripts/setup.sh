@@ -150,7 +150,11 @@ for attempt in 1 2 3; do
     break
   fi
 
-  warn "Gateway start attempt $attempt failed (exit $GW_RC). Waiting 30s before retry..."
+  warn "Gateway start attempt $attempt failed (exit $GW_RC)."
+  # Dump container logs for debugging before retry (container may be destroyed)
+  warn "Container logs (last 30 lines):"
+  docker logs openshell-cluster-nemoclaw 2>&1 | tail -30 || true
+  warn "Waiting 30s before retry..."
   sleep 30
 done
 
