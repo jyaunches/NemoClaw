@@ -77,51 +77,21 @@ fi
 
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-test}"
 
-# ══════════════════════════════════════════════════════════════════
-# Helper: send a message to the agent inside the sandbox using the
-# same mechanism as the Telegram bridge (SSH + nemoclaw-start).
-#
-# This exercises the exact code path that was vulnerable: user message
-# → shell command → SSH → sandbox execution.
-#
-# We use the bridge's actual shellQuote + execFileSync approach from
-# the fixed code on main. The test validates that the message content
-# is treated as literal data, not shell commands.
-# ══════════════════════════════════════════════════════════════════
-
-send_message_to_sandbox() {
-  local message="$1"
-  local session_id="${2:-e2e-injection-test}"
-
-  local ssh_config
-  ssh_config="$(mktemp)"
-  openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_config" 2>/dev/null
-
-  # Use the same mechanism as the bridge: pass message as an argument
-  # via SSH. The key security property is that the message must NOT be
-  # interpreted as shell code on the remote side.
-  local result
-  result=$(timeout 90 ssh -F "$ssh_config" \
-    -o StrictHostKeyChecking=no \
-    -o UserKnownHostsFile=/dev/null \
-    -o ConnectTimeout=10 \
-    -o LogLevel=ERROR \
-    "openshell-${SANDBOX_NAME}" \
-    "echo 'INJECTION_PROBE_START' && echo $(printf '%q' "$message") && echo 'INJECTION_PROBE_END'" \
-    2>&1) || true
-
-  rm -f "$ssh_config"
-  echo "$result"
-}
-
-# Run a command inside the sandbox and capture output
+# Run a command inside the sandbox and capture output.
+# Returns __PROBE_FAILED__ and exit 1 if SSH setup or execution fails,
+# so callers can distinguish "no output" from "probe never ran".
 sandbox_exec() {
   local cmd="$1"
   local ssh_config
   ssh_config="$(mktemp)"
-  openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_config" 2>/dev/null
+  if ! openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_config" 2>/dev/null; then
+    rm -f "$ssh_config"
+    echo "__PROBE_FAILED__"
+    return 1
+  fi
 
   local result
+  local rc=0
   result=$(timeout 60 ssh -F "$ssh_config" \
     -o StrictHostKeyChecking=no \
     -o UserKnownHostsFile=/dev/null \
@@ -129,10 +99,30 @@ sandbox_exec() {
     -o LogLevel=ERROR \
     "openshell-${SANDBOX_NAME}" \
     "$cmd" \
-    2>&1) || true
+    2>&1) || rc=$?
 
   rm -f "$ssh_config"
+  if [ "$rc" -ne 0 ] && [ -z "$result" ]; then
+    echo "__PROBE_FAILED__"
+    return 1
+  fi
   echo "$result"
+}
+
+# Build the same SSH command string the Telegram bridge uses.
+# This exercises the REAL shellQuote() from bin/lib/runner.js to construct
+# the remote command, matching scripts/telegram-bridge.js's runAgentInSandbox().
+build_bridge_command() {
+  local message="$1"
+  local session_id="${2:-e2e-injection-test}"
+  cd "$REPO" && node -e "
+    const { shellQuote } = require('./bin/lib/runner');
+    const msg = process.argv[1];
+    const sid = process.argv[2].replace(/[^a-zA-Z0-9-]/g, '');
+    // This is the exact command template from scripts/telegram-bridge.js
+    const cmd = 'echo INJECTION_PROBE_START && echo ' + shellQuote(msg) + ' && echo INJECTION_PROBE_END';
+    console.log(cmd);
+  " -- "$message" "$session_id"
 }
 
 # ══════════════════════════════════════════════════════════════════
@@ -177,28 +167,16 @@ info "Sandbox hostname: ${SANDBOX_HOSTNAME:-unknown}, user: ${SANDBOX_WHOAMI:-un
 section "Phase 1: Command Substitution Injection"
 
 # T1: $(whoami) must be treated as literal text, not executed
+# Uses the REAL shellQuote() from bin/lib/runner.js to build the command,
+# matching the exact code path in scripts/telegram-bridge.js runAgentInSandbox().
 info "T1: Testing \$(whoami) injection..."
-MARKER_FILE="/tmp/nemoclaw-injection-t1-$(date +%s)"
 PAYLOAD='$(touch /tmp/injection-proof-t1 && echo INJECTED)'
 
-# Write the payload as a file in sandbox, then check if /tmp/injection-proof-t1 was created
 sandbox_exec "rm -f /tmp/injection-proof-t1" >/dev/null 2>&1
 
-# Use printf %q to safely pass the payload through SSH without local expansion
-# This simulates what shellQuote does in the bridge
-ssh_config_t1="$(mktemp)"
-openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_config_t1" 2>/dev/null
-
-# The critical test: pass a payload that would create a file if command
-# substitution is executed. Use stdin to pass the message (like the fixed bridge).
-timeout 30 ssh -F "$ssh_config_t1" \
-  -o StrictHostKeyChecking=no \
-  -o UserKnownHostsFile=/dev/null \
-  -o LogLevel=ERROR \
-  "openshell-${SANDBOX_NAME}" \
-  'MSG=$(cat) && echo "Received: $MSG"' \
-  <<<"$PAYLOAD" >/dev/null 2>&1 || true
-rm -f "$ssh_config_t1"
+# Build command using real shellQuote — this is how the bridge passes messages
+bridge_cmd=$(build_bridge_command "$PAYLOAD")
+sandbox_exec "$bridge_cmd" >/dev/null 2>&1
 
 # Check if the injection file was created
 injection_check=$(sandbox_exec "test -f /tmp/injection-proof-t1 && echo EXPLOITED || echo SAFE")
@@ -209,21 +187,14 @@ else
 fi
 
 # T2: Backtick injection — `command`
+# Uses the REAL shellQuote() from bin/lib/runner.js
 info "T2: Testing backtick injection..."
-sandbox_exec "rm -f /tmp/injection-proof-t2" >/dev/null 2>&1
-
-ssh_config_t2="$(mktemp)"
-openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_config_t2" 2>/dev/null
 PAYLOAD_BT='`touch /tmp/injection-proof-t2`'
 
-timeout 30 ssh -F "$ssh_config_t2" \
-  -o StrictHostKeyChecking=no \
-  -o UserKnownHostsFile=/dev/null \
-  -o LogLevel=ERROR \
-  "openshell-${SANDBOX_NAME}" \
-  'MSG=$(cat) && echo "Received: $MSG"' \
-  <<<"$PAYLOAD_BT" >/dev/null 2>&1 || true
-rm -f "$ssh_config_t2"
+sandbox_exec "rm -f /tmp/injection-proof-t2" >/dev/null 2>&1
+
+bridge_cmd_t2=$(build_bridge_command "$PAYLOAD_BT")
+sandbox_exec "$bridge_cmd_t2" >/dev/null 2>&1
 
 injection_check_t2=$(sandbox_exec "test -f /tmp/injection-proof-t2 && echo EXPLOITED || echo SAFE")
 if echo "$injection_check_t2" | grep -q "SAFE"; then
@@ -238,21 +209,14 @@ fi
 section "Phase 2: Quote Breakout Injection"
 
 # T3: Classic single-quote breakout
+# Uses the REAL shellQuote() which escapes single quotes via '\''
 info "T3: Testing single-quote breakout..."
 sandbox_exec "rm -f /tmp/injection-proof-t3" >/dev/null 2>&1
 
-ssh_config_t3="$(mktemp)"
-openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_config_t3" 2>/dev/null
 PAYLOAD_QUOTE="'; touch /tmp/injection-proof-t3; echo '"
 
-timeout 30 ssh -F "$ssh_config_t3" \
-  -o StrictHostKeyChecking=no \
-  -o UserKnownHostsFile=/dev/null \
-  -o LogLevel=ERROR \
-  "openshell-${SANDBOX_NAME}" \
-  'MSG=$(cat) && echo "Received: $MSG"' \
-  <<<"$PAYLOAD_QUOTE" >/dev/null 2>&1 || true
-rm -f "$ssh_config_t3"
+bridge_cmd_t3=$(build_bridge_command "$PAYLOAD_QUOTE")
+sandbox_exec "$bridge_cmd_t3" >/dev/null 2>&1
 
 injection_check_t3=$(sandbox_exec "test -f /tmp/injection-proof-t3 && echo EXPLOITED || echo SAFE")
 if echo "$injection_check_t3" | grep -q "SAFE"; then
@@ -267,20 +231,13 @@ fi
 section "Phase 3: Parameter Expansion"
 
 # T4: ${NVIDIA_API_KEY} must not expand to the actual key value
+# Uses the REAL shellQuote() — the bridge's quoting must prevent expansion
 info "T4: Testing \${NVIDIA_API_KEY} expansion..."
 
-ssh_config_t4="$(mktemp)"
-openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_config_t4" 2>/dev/null
 PAYLOAD_ENV='${NVIDIA_API_KEY}'
 
-t4_result=$(timeout 30 ssh -F "$ssh_config_t4" \
-  -o StrictHostKeyChecking=no \
-  -o UserKnownHostsFile=/dev/null \
-  -o LogLevel=ERROR \
-  "openshell-${SANDBOX_NAME}" \
-  'MSG=$(cat) && echo "$MSG"' \
-  <<<"$PAYLOAD_ENV" 2>&1) || true
-rm -f "$ssh_config_t4"
+bridge_cmd_t4=$(build_bridge_command "$PAYLOAD_ENV")
+t4_result=$(sandbox_exec "$bridge_cmd_t4" 2>&1) || true
 
 # The result should contain the literal string ${NVIDIA_API_KEY}, not a nvapi- value
 if echo "$t4_result" | grep -q "nvapi-"; then
@@ -405,20 +362,12 @@ done
 section "Phase 6: Normal Message Regression"
 
 # T8: A normal message should be passed through correctly
+# Uses the REAL shellQuote() from bin/lib/runner.js
 info "T8: Testing normal message passthrough..."
 
-ssh_config_t8="$(mktemp)"
-openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_config_t8" 2>/dev/null
 NORMAL_MSG="Hello, what is two plus two?"
-
-t8_result=$(timeout 30 ssh -F "$ssh_config_t8" \
-  -o StrictHostKeyChecking=no \
-  -o UserKnownHostsFile=/dev/null \
-  -o LogLevel=ERROR \
-  "openshell-${SANDBOX_NAME}" \
-  'MSG=$(cat) && echo "Received: $MSG"' \
-  <<<"$NORMAL_MSG" 2>&1) || true
-rm -f "$ssh_config_t8"
+bridge_cmd_t8=$(build_bridge_command "$NORMAL_MSG")
+t8_result=$(sandbox_exec "$bridge_cmd_t8" 2>&1) || true
 
 if echo "$t8_result" | grep -qF "Hello, what is two plus two?"; then
   pass "T8: Normal message passed through correctly"
@@ -427,20 +376,12 @@ else
 fi
 
 # T8b: Test message with special characters that should be treated as literal
+# Uses the REAL shellQuote() from bin/lib/runner.js
 info "T8b: Testing message with safe special characters..."
 
-ssh_config_t8b="$(mktemp)"
-openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_config_t8b" 2>/dev/null
 SPECIAL_MSG="What's the meaning of life? It costs \$5 & is 100% free!"
-
-t8b_result=$(timeout 30 ssh -F "$ssh_config_t8b" \
-  -o StrictHostKeyChecking=no \
-  -o UserKnownHostsFile=/dev/null \
-  -o LogLevel=ERROR \
-  "openshell-${SANDBOX_NAME}" \
-  'MSG=$(cat) && echo "$MSG"' \
-  <<<"$SPECIAL_MSG" 2>&1) || true
-rm -f "$ssh_config_t8b"
+bridge_cmd_t8b=$(build_bridge_command "$SPECIAL_MSG")
+t8b_result=$(sandbox_exec "$bridge_cmd_t8b" 2>&1) || true
 
 # Check the message was received (may be slightly different due to shell, but
 # the key test is that $ and & didn't cause errors or unexpected behavior)
