@@ -47,62 +47,27 @@ function brev(...args) {
   }).trim();
 }
 
-function ssh(cmd, { timeout = 120_000 } = {}) {
-  // Use single quotes to prevent local shell expansion of remote commands
+function ssh(cmd, { timeout = 120_000, stream = false } = {}) {
   const escaped = cmd.replace(/'/g, "'\\''");
-  return execSync(
-    `ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR "${INSTANCE_NAME}" '${escaped}'`,
-    { encoding: "utf-8", timeout, stdio: ["pipe", "pipe", "pipe"] },
-  ).trim();
-}
-
-function shellEscape(value) {
-  return value.replace(/'/g, "'\\''");
-}
-
-/** Write secrets to a temp file on the remote VM (called once during setup). */
-let remoteSecretsFile = null;
-function setupRemoteSecrets() {
-  if (remoteSecretsFile) return;
-  remoteSecretsFile = "/tmp/.e2e-secrets";
-  const secretPreamble = [
-    `export NVIDIA_API_KEY='${shellEscape(process.env.NVIDIA_API_KEY)}'`,
-    `export GITHUB_TOKEN='${shellEscape(process.env.GITHUB_TOKEN)}'`,
-    `export NEMOCLAW_NON_INTERACTIVE=1`,
-    `export NEMOCLAW_SANDBOX_NAME=e2e-test`,
-  ].join("\n");
-
-  // Write secrets via stdin to avoid them appearing in command line
-  execSync(
-    `ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR "${INSTANCE_NAME}" 'cat > ${remoteSecretsFile} && chmod 600 ${remoteSecretsFile}'`,
-    {
-      encoding: "utf-8",
-      timeout: 30_000,
-      input: secretPreamble,
-      stdio: ["pipe", "pipe", "pipe"],
-    },
-  );
-}
-
-/** Run a command on the remote VM with secrets sourced from temp file. */
-function sshWithSecrets(cmd, { timeout = 600_000, stream = false } = {}) {
-  setupRemoteSecrets();
-
-  // When stream=true, pipe stdout/stderr to the CI log in real time
-  // so long-running steps (bootstrap) show progress instead of silence.
   /** @type {import("child_process").StdioOptions} */
   const stdio = stream ? ["inherit", "inherit", "inherit"] : ["pipe", "pipe", "pipe"];
-
-  const escaped = cmd.replace(/'/g, "'\\''");
   const result = execSync(
-    `ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR "${INSTANCE_NAME}" 'source ${remoteSecretsFile} && ${escaped}'`,
-    {
-      encoding: "utf-8",
-      timeout,
-      stdio,
-    },
+    `ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR "${INSTANCE_NAME}" '${escaped}'`,
+    { encoding: "utf-8", timeout, stdio },
   );
   return stream ? "" : result.trim();
+}
+
+/** Run a command on the remote VM with env vars set for NemoClaw. */
+function sshEnv(cmd, { timeout = 600_000, stream = false } = {}) {
+  const envPrefix = [
+    `export NVIDIA_API_KEY='${process.env.NVIDIA_API_KEY}'`,
+    `export GITHUB_TOKEN='${process.env.GITHUB_TOKEN}'`,
+    `export NEMOCLAW_NON_INTERACTIVE=1`,
+    `export NEMOCLAW_SANDBOX_NAME=e2e-test`,
+  ].join(" && ");
+
+  return ssh(`${envPrefix} && ${cmd}`, { timeout, stream });
 }
 
 function waitForSsh(maxAttempts = 90, intervalMs = 5_000) {
@@ -131,7 +96,7 @@ function runRemoteTest(scriptPath) {
   ].join(" && ");
 
   // Stream test output to CI log AND capture it for assertions
-  sshWithSecrets(cmd, { timeout: 900_000, stream: true });
+  sshEnv(cmd, { timeout: 900_000, stream: true });
   // Retrieve the captured output for assertion checking
   return ssh("cat /tmp/test-output.log", { timeout: 30_000 });
 }
@@ -182,7 +147,7 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
 
     // Bootstrap VM — stream output to CI log so we can see progress
     console.log(`[${elapsed()}] Running brev-setup.sh (bootstrap)...`);
-    sshWithSecrets(`cd ${remoteDir} && SKIP_VLLM=1 bash scripts/brev-setup.sh`, { timeout: 2_400_000, stream: true });
+    sshEnv(`cd ${remoteDir} && SKIP_VLLM=1 bash scripts/brev-setup.sh`, { timeout: 2_400_000, stream: true });
     console.log(`[${elapsed()}] Bootstrap complete`);
 
     // Install nemoclaw CLI — brev-setup.sh creates the sandbox but doesn't
@@ -235,16 +200,6 @@ REGISTRY`,
 
   afterAll(() => {
     if (!instanceCreated) return;
-
-    // Clean up secrets file
-    if (remoteSecretsFile) {
-      try {
-        ssh(`rm -f ${remoteSecretsFile}`, { timeout: 10_000 });
-      } catch {
-        // Best-effort cleanup
-      }
-    }
-
     if (process.env.KEEP_ALIVE === "true") {
       console.log(`\n  Instance "${INSTANCE_NAME}" kept alive for debugging.`);
       console.log(`  To connect: brev refresh && ssh ${INSTANCE_NAME}`);
