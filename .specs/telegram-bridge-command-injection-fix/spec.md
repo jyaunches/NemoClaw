@@ -53,7 +53,7 @@ Additionally, apply defense-in-depth hardening identified in the PR #119 securit
 
 ## Phases
 
-### Phase 1: Input Validation Hardening
+### Phase 1: Input Validation Hardening [COMPLETED: d1fe154]
 
 **Goal:** Add strict validation for `SANDBOX_NAME` and `sessionId` to reject shell metacharacters and prevent option injection.
 
@@ -71,13 +71,13 @@ Additionally, apply defense-in-depth hardening identified in the PR #119 securit
 
 **Acceptance Criteria:**
 
-- [ ] `SANDBOX_NAME` with metacharacters (e.g., `foo;rm -rf /`) causes startup to exit with error
-- [ ] `SANDBOX_NAME` starting with hyphen (e.g., `-v`, `--help`) causes startup to exit with error
-- [ ] `sessionId` containing special characters gets sanitized to safe value
-- [ ] Empty sessionId after sanitization returns error response
-- [ ] Messages longer than 4096 characters are rejected with user-friendly error
+- [x] `SANDBOX_NAME` with metacharacters (e.g., `foo;rm -rf /`) causes startup to exit with error
+- [x] `SANDBOX_NAME` starting with hyphen (e.g., `-v`, `--help`) causes startup to exit with error
+- [x] `sessionId` containing special characters gets sanitized to safe value
+- [x] Empty sessionId after sanitization returns error response
+- [x] Messages longer than 4096 characters are rejected with user-friendly error
 
-### Phase 2: Stdin-Based Credential and Message Passing
+### Phase 2: Stdin-Based Credential and Message Passing [COMPLETED: d1fe154]
 
 **Goal:** Eliminate shell injection by passing sensitive data via stdin instead of command string.
 
@@ -104,14 +104,14 @@ read -r NVIDIA_API_KEY && export NVIDIA_API_KEY && MSG=$(cat) && exec nemoclaw-s
 
 **Acceptance Criteria:**
 
-- [ ] Normal messages work correctly — agent responds
-- [ ] Message containing `$(whoami)` is treated as literal text
-- [ ] Message containing backticks is treated as literal text
-- [ ] Message containing single quotes is treated as literal text
-- [ ] `NVIDIA_API_KEY` no longer appears in process arguments (verify via `ps aux`)
-- [ ] API key is successfully read by remote script and used for inference
+- [x] Normal messages work correctly — agent responds
+- [x] Message containing `$(whoami)` is treated as literal text
+- [x] Message containing backticks is treated as literal text
+- [x] Message containing single quotes is treated as literal text
+- [x] `NVIDIA_API_KEY` no longer appears in process arguments (verify via `ps aux`)
+- [x] API key is successfully read by remote script and used for inference
 
-### Phase 3: Additional Security Hardening
+### Phase 3: Additional Security Hardening [COMPLETED: d1fe154]
 
 **Goal:** Address remaining security gaps identified in PR #119 security review.
 
@@ -147,13 +147,13 @@ read -r NVIDIA_API_KEY && export NVIDIA_API_KEY && MSG=$(cat) && exec nemoclaw-s
 
 **Acceptance Criteria:**
 
-- [ ] `execFileSync` used for all external command calls (no shell interpretation)
-- [ ] Resolved `OPENSHELL` path used consistently throughout
-- [ ] Temp SSH config files use unpredictable paths
-- [ ] Temp files created with exclusive flag and restrictive permissions (0o600)
-- [ ] Temp files cleaned up after use
+- [x] `execFileSync` used for all external command calls (no shell interpretation)
+- [x] Resolved `OPENSHELL` path used consistently throughout
+- [x] Temp SSH config files use unpredictable paths
+- [x] Temp files created with exclusive flag and restrictive permissions (0o600)
+- [x] Temp files cleaned up after use
 
-### Phase 4: Test Coverage
+### Phase 4: Test Coverage [COMPLETED: f23a0b9]
 
 **Goal:** Add unit and integration tests for the security fix, and fix E2E test to exercise real code paths.
 
@@ -181,12 +181,12 @@ read -r NVIDIA_API_KEY && export NVIDIA_API_KEY && MSG=$(cat) && exec nemoclaw-s
 
 **Acceptance Criteria:**
 
-- [ ] Unit tests pass for validation functions
-- [ ] Integration test confirms `$(...)` in message doesn't execute
-- [ ] Test confirms API key not in process arguments
-- [ ] Test confirms temp files are cleaned up
-- [ ] E2E test exercises actual `runAgentInSandbox()` function, not ad-hoc SSH
-- [ ] All existing tests still pass
+- [x] Unit tests pass for validation functions
+- [x] Integration test confirms `$(...)` in message doesn't execute
+- [x] Test confirms API key not in process arguments
+- [x] Test confirms temp files are cleaned up
+- [x] E2E test exercises actual `runAgentInSandbox()` function, not ad-hoc SSH
+- [x] All existing tests still pass (694 tests pass)
 
 ## Security Considerations
 
