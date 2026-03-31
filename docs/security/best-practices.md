@@ -32,22 +32,55 @@ NemoClaw enforces security at four layers.
 NemoClaw locks some when it creates the sandbox and requires a restart to change them.
 You can hot-reload others while the sandbox runs.
 
+The following diagram shows the default posture immediately after `nemoclaw onboard`, before you approve any endpoints or apply any presets.
+
 ```{mermaid}
-flowchart LR
-    subgraph locked ["Locked at Creation"]
-        FS["Filesystem<br/>Read-only mounts<br/>Landlock LSM<br/>Config integrity hash<br/>Immutable flag"]
-        PROC["Process<br/>Capability drops<br/>ulimit · PATH lock<br/>Gateway user isolation<br/>Non-root agent"]
+flowchart TB
+    subgraph HOST["Your Machine — default posture after nemoclaw onboard"]
+        direction TB
+
+        YOU["👤 Operator"]
+
+        subgraph NC["NemoClaw + OpenShell"]
+            direction TB
+
+            subgraph SB["Sandbox — the agent's isolated world"]
+                direction LR
+                PROC["⚙️ Process Layer<br/>Controls what the agent can execute"]
+                FS["📁 Filesystem Layer<br/>Controls what the agent can read and write"]
+                AGENT["🤖 Agent"]
+            end
+
+            subgraph GW["Gateway — the gatekeeper"]
+                direction LR
+                NET["🌐 Network Layer<br/>Controls where the agent can connect"]
+                INF["🧠 Inference Layer<br/>Controls which AI models the agent can use"]
+            end
+        end
     end
 
-    subgraph hotReload ["Hot-Reloadable at Runtime"]
-        NET["Network<br/>Deny-by-default egress<br/>Binary-scoped rules<br/>Operator approval"]
-        INF["Inference<br/>Routed through gateway<br/>Credential isolation<br/>Provider selection"]
-    end
+    OUTSIDE["🌍 Outside World<br/>Internet · AI Providers · APIs"]
 
-    AGENT["Agent in Sandbox"] --> NET
-    AGENT --> FS
-    AGENT --> PROC
-    AGENT --> INF
+    AGENT -- "all requests" --> GW
+    GW -- "approved only" --> OUTSIDE
+    YOU -. "approve / deny" .-> GW
+
+    classDef agent fill:#76b900,stroke:#5a8f00,color:#fff,stroke-width:2px,font-weight:bold
+    classDef locked fill:#1a1a1a,stroke:#76b900,color:#fff,stroke-width:2px
+    classDef hot fill:#333,stroke:#76b900,color:#e6f2cc,stroke-width:2px
+    classDef external fill:#f5f5f5,stroke:#ccc,color:#1a1a1a,stroke-width:1px
+    classDef operator fill:#fff,stroke:#76b900,color:#1a1a1a,stroke-width:2px,font-weight:bold
+
+    class AGENT agent
+    class PROC,FS locked
+    class NET,INF hot
+    class OUTSIDE external
+    class YOU operator
+
+    style HOST fill:none,stroke:#76b900,stroke-width:2px,color:#1a1a1a
+    style NC fill:none,stroke:#76b900,stroke-width:1px,stroke-dasharray:5 5,color:#1a1a1a
+    style SB fill:#f5faed,stroke:#76b900,stroke-width:2px,color:#1a1a1a
+    style GW fill:#2a2a2a,stroke:#76b900,stroke-width:2px,color:#fff
 ```
 
 :::{list-table}
