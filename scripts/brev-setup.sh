@@ -37,8 +37,23 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 export NEEDRESTART_MODE=a
 export DEBIAN_FRONTEND=noninteractive
 
+# Wait for any existing apt locks (e.g. Brev's own provisioning on boot)
+wait_for_apt() {
+  local max_wait=300  # 5 minutes
+  local waited=0
+  while fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock >/dev/null 2>&1; do
+    if [ $waited -ge $max_wait ]; then
+      fail "apt lock still held after ${max_wait}s — another process is stuck"
+    fi
+    info "Waiting for apt lock to be released... (${waited}s)"
+    sleep 5
+    waited=$((waited + 5))
+  done
+}
+
 # --- 0. Node.js (needed for services) ---
 if ! command -v node >/dev/null 2>&1; then
+  wait_for_apt
   info "Installing Node.js..."
   NODESOURCE_URL="https://deb.nodesource.com/setup_22.x"
   NODESOURCE_SHA256="575583bbac2fccc0b5edd0dbc03e222d9f9dc8d724da996d22754d6411104fd1"
@@ -65,6 +80,7 @@ fi
 
 # --- 1. Docker ---
 if ! command -v docker >/dev/null 2>&1; then
+  wait_for_apt
   info "Installing Docker..."
   sudo apt-get update -qq >/dev/null 2>&1
   sudo apt-get install -y -qq docker.io >/dev/null 2>&1
