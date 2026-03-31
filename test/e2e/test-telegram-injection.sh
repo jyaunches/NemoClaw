@@ -451,6 +451,142 @@ else
 fi
 
 # ══════════════════════════════════════════════════════════════════
+# Phase 7: Real runAgentInSandbox() Invocation
+#
+# PR #1092 feedback from @cv: The tests above use ad-hoc SSH commands
+# that bypass the actual code path in telegram-bridge.js. This phase
+# exercises the real runAgentInSandbox() function via Node.js to ensure
+# the production code is validated.
+# ══════════════════════════════════════════════════════════════════
+section "Phase 7: Real runAgentInSandbox() Code Path"
+
+info "T9: Testing real runAgentInSandbox() with injection payload..."
+
+# Create a test script that invokes the actual runAgentInSandbox function
+cat >/tmp/test-real-bridge.js <<'TESTSCRIPT'
+// Test script to invoke the real runAgentInSandbox() function
+const path = require('path');
+
+// Mock resolveOpenshell to use the system openshell
+const resolveOpenshellPath = require.resolve(path.join(process.cwd(), 'bin/lib/resolve-openshell'));
+require.cache[resolveOpenshellPath] = {
+  exports: { resolveOpenshell: () => process.env.OPENSHELL_PATH || 'openshell' }
+};
+
+const bridge = require('./scripts/telegram-bridge.js');
+
+async function test() {
+  const message = process.argv[2] || 'Hello';
+  const sessionId = process.argv[3] || 'e2e-test';
+  const apiKey = process.env.NVIDIA_API_KEY;
+  const sandbox = process.env.NEMOCLAW_SANDBOX_NAME || 'e2e-test';
+  const openshell = process.env.OPENSHELL_PATH || 'openshell';
+
+  if (!apiKey) {
+    console.error('NVIDIA_API_KEY required');
+    process.exit(1);
+  }
+
+  try {
+    // Call the real runAgentInSandbox with options override for testing
+    const result = await bridge.runAgentInSandbox(message, sessionId, {
+      apiKey,
+      sandbox,
+      openshell,
+    });
+    console.log('RESULT_START');
+    console.log(result);
+    console.log('RESULT_END');
+  } catch (err) {
+    console.error('ERROR:', err.message);
+    process.exit(1);
+  }
+}
+
+test();
+TESTSCRIPT
+
+# Find openshell path
+OPENSHELL_PATH=$(command -v openshell) || OPENSHELL_PATH=""
+if [ -z "$OPENSHELL_PATH" ]; then
+  skip "T9: openshell not found, cannot test real runAgentInSandbox()"
+else
+  # Clean up any previous injection markers
+  sandbox_exec "rm -f /tmp/injection-proof-t9" >/dev/null 2>&1
+
+  # Test with injection payload through real runAgentInSandbox
+  t9_result=$(cd "$REPO" && OPENSHELL_PATH="$OPENSHELL_PATH" \
+    NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME" \
+    timeout 120 node /tmp/test-real-bridge.js \
+    '$(touch /tmp/injection-proof-t9 && echo INJECTED)' \
+    'e2e-injection-t9' 2>&1) || true
+
+  # Check if injection file was created
+  injection_check_t9=$(sandbox_exec "test -f /tmp/injection-proof-t9 && echo EXPLOITED || echo SAFE")
+  if echo "$injection_check_t9" | grep -q "SAFE"; then
+    pass "T9: Real runAgentInSandbox() prevented \$(command) injection"
+  else
+    fail "T9: Real runAgentInSandbox() EXECUTED injection — vulnerability in production code!"
+  fi
+fi
+
+# T10: Test backticks through real code path
+info "T10: Testing real runAgentInSandbox() with backtick payload..."
+
+if [ -z "$OPENSHELL_PATH" ]; then
+  skip "T10: openshell not found, cannot test real runAgentInSandbox()"
+else
+  sandbox_exec "rm -f /tmp/injection-proof-t10" >/dev/null 2>&1
+
+  t10_result=$(cd "$REPO" && OPENSHELL_PATH="$OPENSHELL_PATH" \
+    NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME" \
+    timeout 120 node /tmp/test-real-bridge.js \
+    '`touch /tmp/injection-proof-t10`' \
+    'e2e-injection-t10' 2>&1) || true
+
+  injection_check_t10=$(sandbox_exec "test -f /tmp/injection-proof-t10 && echo EXPLOITED || echo SAFE")
+  if echo "$injection_check_t10" | grep -q "SAFE"; then
+    pass "T10: Real runAgentInSandbox() prevented backtick injection"
+  else
+    fail "T10: Real runAgentInSandbox() EXECUTED backtick injection — vulnerability in production code!"
+  fi
+fi
+
+# T11: Test API key not exposed through real code path
+info "T11: Verifying API key not in process arguments (real code path)..."
+
+if [ -z "$OPENSHELL_PATH" ]; then
+  skip "T11: openshell not found, cannot test real runAgentInSandbox()"
+else
+  # Start the bridge test in background and check ps
+  cd "$REPO" && OPENSHELL_PATH="$OPENSHELL_PATH" \
+    NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME" \
+    timeout 60 node /tmp/test-real-bridge.js 'Hello world' 'e2e-ps-check' &
+  BRIDGE_PID=$!
+
+  # Give it a moment to spawn the SSH process
+  sleep 2
+
+  # Check if API key appears in process list
+  API_KEY_PREFIX="${NVIDIA_API_KEY:0:15}"
+  # shellcheck disable=SC2009 # pgrep doesn't support the output format we need
+  ps_output=$(ps aux 2>/dev/null | grep -v grep | grep -v "test-telegram-injection" || true)
+
+  if echo "$ps_output" | grep -qF "$API_KEY_PREFIX"; then
+    fail "T11: API key found in process arguments via real runAgentInSandbox()"
+  else
+    pass "T11: API key NOT visible in process arguments (real code path)"
+  fi
+
+  # Clean up background process
+  kill $BRIDGE_PID 2>/dev/null || true
+  wait $BRIDGE_PID 2>/dev/null || true
+fi
+
+# Clean up test script
+rm -f /tmp/test-real-bridge.js
+
+# ══════════════════════════════════════════════════════════════════
 # Summary
 # ══════════════════════════════════════════════════════════════════
 echo ""
