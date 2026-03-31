@@ -55,9 +55,9 @@ if ! command -v node >/dev/null 2>&1; then
     else
       fail "No SHA-256 verification tool found (need sha256sum or shasum)"
     fi
-    sudo -E bash "$tmpdir/setup_node.sh" >/dev/null 2>&1
+    sudo -E bash "$tmpdir/setup_node.sh"
   )
-  sudo apt-get install -y -qq nodejs >/dev/null 2>&1
+  sudo apt-get install -y -qq nodejs
   info "Node.js $(node --version) installed"
 else
   info "Node.js already installed: $(node --version)"
