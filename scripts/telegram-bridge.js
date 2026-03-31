@@ -36,12 +36,26 @@ let ALLOWED_CHATS = null;
  * Initialize configuration from environment variables.
  * Called automatically when running as main module.
  * Can be called manually for testing with custom values.
+ *
+ * @param {object} [options] - Optional overrides for testing
+ * @param {string} [options.openshell] - Override openshell path
+ * @param {string} [options.token] - Override Telegram bot token
+ * @param {string} [options.apiKey] - Override NVIDIA API key
+ * @param {string} [options.sandbox] - Override sandbox name
+ * @param {string[]} [options.allowedChats] - Override allowed chat IDs
+ * @param {boolean} [options.exitOnError=true] - Whether to exit on validation errors (set false for testing)
+ * @returns {object} - The resolved configuration object
  */
 function initConfig(options = {}) {
+  const exitOnError = options.exitOnError !== false;
+
   OPENSHELL = options.openshell || resolveOpenshell();
   if (!OPENSHELL) {
-    console.error("openshell not found on PATH or in common locations");
-    process.exit(1);
+    if (exitOnError) {
+      console.error("openshell not found on PATH or in common locations");
+      process.exit(1);
+    }
+    throw new Error("openshell not found on PATH or in common locations");
   }
 
   TOKEN = options.token || process.env.TELEGRAM_BOT_TOKEN;
@@ -51,8 +65,11 @@ function initConfig(options = {}) {
   try {
     validateName(SANDBOX, "SANDBOX_NAME");
   } catch (e) {
-    console.error(e.message);
-    process.exit(1);
+    if (exitOnError) {
+      console.error(e.message);
+      process.exit(1);
+    }
+    throw e;
   }
 
   ALLOWED_CHATS = options.allowedChats || (process.env.ALLOWED_CHAT_IDS
@@ -60,13 +77,21 @@ function initConfig(options = {}) {
     : null);
 
   if (!TOKEN) {
-    console.error("TELEGRAM_BOT_TOKEN required");
-    process.exit(1);
+    if (exitOnError) {
+      console.error("TELEGRAM_BOT_TOKEN required");
+      process.exit(1);
+    }
+    throw new Error("TELEGRAM_BOT_TOKEN required");
   }
   if (!API_KEY) {
-    console.error("NVIDIA_API_KEY required");
-    process.exit(1);
+    if (exitOnError) {
+      console.error("NVIDIA_API_KEY required");
+      process.exit(1);
+    }
+    throw new Error("NVIDIA_API_KEY required");
   }
+
+  return { OPENSHELL, TOKEN, API_KEY, SANDBOX, ALLOWED_CHATS };
 }
 
 let offset = 0;
@@ -130,12 +155,22 @@ async function sendTyping(chatId) {
 /**
  * Sanitize session ID to contain only alphanumeric characters and hyphens.
  * Returns null if the result is empty after sanitization.
+ *
+ * SECURITY: Leading hyphens are stripped to prevent option injection attacks.
+ * For example, a session ID of "--help" would otherwise be interpreted as a
+ * command-line flag by nemoclaw-start. This differs from SANDBOX_NAME validation
+ * (which uses validateName() requiring lowercase alphanumeric with internal hyphens)
+ * because session IDs come from Telegram chat IDs which can be negative numbers.
+ *
  * @param {string|number} sessionId - The session ID to sanitize
  * @returns {string|null} - Sanitized session ID or null if empty
  */
 function sanitizeSessionId(sessionId) {
+  // Strip all non-alphanumeric characters except hyphens
   const sanitized = String(sessionId).replace(/[^a-zA-Z0-9-]/g, "");
-  return sanitized.length > 0 ? sanitized : null;
+  // Remove leading hyphens to prevent option injection (e.g., "--help", "-v")
+  const noLeadingHyphen = sanitized.replace(/^-+/, "");
+  return noLeadingHyphen.length > 0 ? noLeadingHyphen : null;
 }
 
 /**
