@@ -156,9 +156,12 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
 
       // Use `brev search cpu | brev create` pattern for CPU-only instances (Brev CLI v0.6.317+)
       // The search outputs instance types sorted by price, and create tries them in order.
+      // Note: brev create --startup-script doesn't support URLs, only inline scripts or @filepath,
+      // so we use curl to download and execute the launchable script.
+      const startupCmd = `curl -fsSL '${LAUNCHABLE_SETUP_SCRIPT}' | bash`;
       execSync(
         `brev search cpu --min-vcpu ${BREV_MIN_VCPU} --min-ram ${BREV_MIN_RAM} --sort price | ` +
-        `brev create ${INSTANCE_NAME} --startup-script "${LAUNCHABLE_SETUP_SCRIPT}" --detached`,
+        `brev create ${INSTANCE_NAME} --startup-script "${startupCmd}" --detached`,
         { encoding: "utf-8", timeout: 180_000, stdio: ["pipe", "inherit", "inherit"] },
       );
       instanceCreated = true;
