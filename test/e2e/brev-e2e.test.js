@@ -17,7 +17,8 @@
  *
  * Optional env vars:
  *   TEST_SUITE       — which test to run: full (default), credential-sanitization, all
- *   BREV_CPU         — CPU spec (default: 4x16)
+ *   BREV_MIN_VCPU    — Minimum vCPUs for CPU instance (default: 4)
+ *   BREV_MIN_RAM     — Minimum RAM in GB for CPU instance (default: 16)
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -26,7 +27,9 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
-const BREV_CPU = process.env.BREV_CPU || "4x16";
+// CPU instance specs: min vCPUs and RAM for the instance search
+const BREV_MIN_VCPU = parseInt(process.env.BREV_MIN_VCPU || "4", 10);
+const BREV_MIN_RAM = parseInt(process.env.BREV_MIN_RAM || "16", 10);
 const INSTANCE_NAME = process.env.INSTANCE_NAME;
 const TEST_SUITE = process.env.TEST_SUITE || "full";
 const REPO_DIR = path.resolve(import.meta.dirname, "../..");
@@ -36,7 +39,6 @@ const REPO_DIR = path.resolve(import.meta.dirname, "../..");
 // instead of our manual brev-setup.sh bootstrap.
 const LAUNCHABLE_SETUP_SCRIPT =
   "https://raw.githubusercontent.com/NVIDIA/OpenShell-Community/refs/heads/feat/brev-nemoclaw-plugin/brev/launch-nemoclaw.sh";
-const NEMOCLAW_REPO_URL = "https://github.com/NVIDIA/NemoClaw.git";
 
 // Use launchable by default; set USE_LAUNCHABLE=0 or USE_LAUNCHABLE=false to fall back to brev-setup.sh
 const USE_LAUNCHABLE = !["0", "false"].includes(process.env.USE_LAUNCHABLE?.toLowerCase());
@@ -94,7 +96,7 @@ function sshWithSecrets(cmd, { timeout = 600_000, stream = false } = {}) {
   return stream ? "" : result.trim();
 }
 
-function waitForSsh(maxAttempts = 60, intervalMs = 5_000) {
+function waitForSsh(maxAttempts = 90, intervalMs = 5_000) {
   for (let i = 1; i <= maxAttempts; i++) {
     try {
       ssh("echo ok", { timeout: 10_000 });
@@ -144,26 +146,23 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
     brev("login", "--token", process.env.BREV_API_TOKEN);
 
     if (USE_LAUNCHABLE) {
-      // --- Launchable path: brev start with the NemoClaw launch script ---
+      // --- Launchable path: brev search cpu | brev create with startup script ---
       // This uses the OpenShell-Community launch-nemoclaw.sh which goes through
       // nemoclaw's own install/onboard flow — potentially faster than our manual
       // brev-setup.sh (different sandbox build strategy, pre-built images, etc.)
-      console.log(`[${elapsed()}] Creating instance via launchable (brev start + setup-script)...`);
-      console.log(`[${elapsed()}]   setup-script: ${LAUNCHABLE_SETUP_SCRIPT}`);
-      console.log(`[${elapsed()}]   repo: ${NEMOCLAW_REPO_URL}`);
-      console.log(`[${elapsed()}]   cpu: ${BREV_CPU}`);
+      console.log(`[${elapsed()}] Creating CPU instance via launchable (brev search cpu | brev create)...`);
+      console.log(`[${elapsed()}]   startup-script: ${LAUNCHABLE_SETUP_SCRIPT}`);
+      console.log(`[${elapsed()}]   min-vcpu: ${BREV_MIN_VCPU}, min-ram: ${BREV_MIN_RAM}GB`);
 
-      // brev start with a git URL may take longer than the default 60s brev() timeout
-      // (it registers the instance + kicks off provisioning before returning)
-      execFileSync("brev", [
-        "start", NEMOCLAW_REPO_URL,
-        "--name", INSTANCE_NAME,
-        "--cpu", BREV_CPU,
-        "--setup-script", LAUNCHABLE_SETUP_SCRIPT,
-        "--detached",
-      ], { encoding: "utf-8", timeout: 180_000, stdio: ["pipe", "inherit", "inherit"] });
+      // Use `brev search cpu | brev create` pattern for CPU-only instances (Brev CLI v0.6.317+)
+      // The search outputs instance types sorted by price, and create tries them in order.
+      execSync(
+        `brev search cpu --min-vcpu ${BREV_MIN_VCPU} --min-ram ${BREV_MIN_RAM} --sort price | ` +
+        `brev create ${INSTANCE_NAME} --startup-script "${LAUNCHABLE_SETUP_SCRIPT}" --detached`,
+        { encoding: "utf-8", timeout: 180_000, stdio: ["pipe", "inherit", "inherit"] },
+      );
       instanceCreated = true;
-      console.log(`[${elapsed()}] brev start returned (instance provisioning in background)`);
+      console.log(`[${elapsed()}] brev create returned (instance provisioning in background)`);
 
       // Wait for SSH
       try { brev("refresh"); } catch { /* ignore */ }
@@ -256,8 +255,13 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
 
     } else {
       // --- Legacy path: bare brev create + brev-setup.sh ---
-      console.log(`[${elapsed()}] Creating bare instance via brev create...`);
-      brev("create", INSTANCE_NAME, "--cpu", BREV_CPU, "--detached");
+      console.log(`[${elapsed()}] Creating bare CPU instance via brev search cpu | brev create...`);
+      console.log(`[${elapsed()}]   min-vcpu: ${BREV_MIN_VCPU}, min-ram: ${BREV_MIN_RAM}GB`);
+      execSync(
+        `brev search cpu --min-vcpu ${BREV_MIN_VCPU} --min-ram ${BREV_MIN_RAM} --sort price | ` +
+        `brev create ${INSTANCE_NAME} --detached`,
+        { encoding: "utf-8", timeout: 180_000, stdio: ["pipe", "inherit", "inherit"] },
+      );
       instanceCreated = true;
 
       // Wait for SSH
