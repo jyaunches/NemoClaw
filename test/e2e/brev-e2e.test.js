@@ -119,6 +119,14 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
     );
     brev("login", "--token", process.env.BREV_API_TOKEN);
 
+    // Delete any leftover instance from a previous failed run
+    try {
+      brev("delete", INSTANCE_NAME);
+      console.log(`[${elapsed()}] Deleted leftover instance "${INSTANCE_NAME}"`);
+    } catch {
+      // Expected — no leftover instance
+    }
+
     // Create bare CPU instance via brev search cpu | brev create
     console.log(`[${elapsed()}] Creating CPU instance via brev search cpu | brev create...`);
     console.log(`[${elapsed()}]   min-vcpu: ${BREV_MIN_VCPU}, min-ram: ${BREV_MIN_RAM}GB`);
