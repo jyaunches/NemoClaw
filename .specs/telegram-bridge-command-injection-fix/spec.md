@@ -155,7 +155,9 @@ read -r NVIDIA_API_KEY && export NVIDIA_API_KEY && MSG=$(cat) && exec nemoclaw-s
 
 ### Phase 4: Test Coverage
 
-**Goal:** Add unit and integration tests for the security fix.
+**Goal:** Add unit and integration tests for the security fix, and fix E2E test to exercise real code paths.
+
+**Background:** PR #1092 review feedback from @cv identified that `test/e2e/test-telegram-injection.sh` uses ad-hoc SSH commands (`MSG=$(cat) && echo ...`) instead of exercising the actual `runAgentInSandbox()` function in `telegram-bridge.js`. This makes the test validate the concept but not the production code path.
 
 **Changes:**
 
@@ -166,10 +168,16 @@ read -r NVIDIA_API_KEY && export NVIDIA_API_KEY && MSG=$(cat) && exec nemoclaw-s
 2. Add integration test that verifies injection payloads are treated as literal text
 3. Add test that API key is not visible in process list
 4. Add test for temp file cleanup
+5. **Update `test/e2e/test-telegram-injection.sh`** to exercise real `runAgentInSandbox()`:
+   - Create a test harness that imports/invokes the actual function from `telegram-bridge.js`
+   - Or refactor `runAgentInSandbox()` to be exportable and testable
+   - Verify the actual stdin-based message passing path, not ad-hoc SSH commands
 
 **Files:**
 
 - `test/telegram-bridge.test.js` (new file)
+- `test/e2e/test-telegram-injection.sh` (update to use real code paths)
+- `scripts/telegram-bridge.js` (may need minor refactor to export `runAgentInSandbox` for testing)
 
 **Acceptance Criteria:**
 
@@ -177,6 +185,7 @@ read -r NVIDIA_API_KEY && export NVIDIA_API_KEY && MSG=$(cat) && exec nemoclaw-s
 - [ ] Integration test confirms `$(...)` in message doesn't execute
 - [ ] Test confirms API key not in process arguments
 - [ ] Test confirms temp files are cleaned up
+- [ ] E2E test exercises actual `runAgentInSandbox()` function, not ad-hoc SSH
 - [ ] All existing tests still pass
 
 ## Security Considerations
@@ -194,6 +203,7 @@ read -r NVIDIA_API_KEY && export NVIDIA_API_KEY && MSG=$(cat) && exec nemoclaw-s
 - **PR #617** (upstream): Bridge framework refactor — if merged first, changes apply to `bridge-core.js` instead
 - **PR #699** (upstream): `ALLOWED_CHAT_IDS` warning/opt-in behavior — out of scope for this fix, separate concern
 - **PR #897** (upstream): Env var propagation fix in `bin/nemoclaw.js` — separate file, no conflict
+- **PR #1092** (upstream): Added E2E tests for telegram-injection; @cv's review noted tests don't exercise real `runAgentInSandbox()` — we address this in Phase 4
 
 ## Test Plan
 

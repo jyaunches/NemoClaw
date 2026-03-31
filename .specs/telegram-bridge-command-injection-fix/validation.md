@@ -9,6 +9,10 @@ Test Spec: `.specs/telegram-bridge-command-injection-fix/tests.md`
 
 **Primary Validation**: Run `test/e2e/test-telegram-injection.sh` via brev-e2e test suite
 
+### PR #1092 Feedback Addressed
+
+Per @cv's review on PR #1092, the original `test-telegram-injection.sh` used ad-hoc SSH commands (`MSG=$(cat) && echo ...`) instead of exercising the actual `runAgentInSandbox()` function. As part of Phase 4, we update the E2E test to invoke the real production code path.
+
 ## Validation Strategy
 
 The existing E2E test `test/e2e/test-telegram-injection.sh` provides comprehensive validation of the security fix. This test:
