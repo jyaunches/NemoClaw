@@ -17,6 +17,7 @@ Thumbs.db
 draft_newsletter_*
 research/
 specs/
+.specs/
 vdr-notes/
 
 # Security: secrets, credentials, and keys

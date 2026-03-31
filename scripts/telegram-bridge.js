@@ -17,26 +17,82 @@
  */
 
 const https = require("https");
+const fs = require("fs");
 const { execFileSync, spawn } = require("child_process");
 const { resolveOpenshell } = require("../bin/lib/resolve-openshell");
-const { shellQuote, validateName } = require("../bin/lib/runner");
+const { validateName } = require("../bin/lib/runner");
 
-const OPENSHELL = resolveOpenshell();
-if (!OPENSHELL) {
-  console.error("openshell not found on PATH or in common locations");
-  process.exit(1);
+// Maximum message length (matches Telegram's limit)
+const MAX_MESSAGE_LENGTH = 4096;
+
+// Configuration - validated at startup when running as main module
+let OPENSHELL = null;
+let TOKEN = null;
+let API_KEY = null;
+let SANDBOX = null;
+let ALLOWED_CHATS = null;
+
+/**
+ * Initialize configuration from environment variables.
+ * Called automatically when running as main module.
+ * Can be called manually for testing with custom values.
+ *
+ * @param {object} [options] - Optional overrides for testing
+ * @param {string} [options.openshell] - Override openshell path
+ * @param {string} [options.token] - Override Telegram bot token
+ * @param {string} [options.apiKey] - Override NVIDIA API key
+ * @param {string} [options.sandbox] - Override sandbox name
+ * @param {string[]} [options.allowedChats] - Override allowed chat IDs
+ * @param {boolean} [options.exitOnError=true] - Whether to exit on validation errors (set false for testing)
+ * @returns {object} - The resolved configuration object
+ */
+function initConfig(options = {}) {
+  const exitOnError = options.exitOnError !== false;
+
+  OPENSHELL = options.openshell || resolveOpenshell();
+  if (!OPENSHELL) {
+    if (exitOnError) {
+      console.error("openshell not found on PATH or in common locations");
+      process.exit(1);
+    }
+    throw new Error("openshell not found on PATH or in common locations");
+  }
+
+  TOKEN = options.token || process.env.TELEGRAM_BOT_TOKEN;
+  API_KEY = options.apiKey || process.env.NVIDIA_API_KEY;
+  SANDBOX = options.sandbox || process.env.SANDBOX_NAME || "nemoclaw";
+
+  try {
+    validateName(SANDBOX, "SANDBOX_NAME");
+  } catch (e) {
+    if (exitOnError) {
+      console.error(e.message);
+      process.exit(1);
+    }
+    throw e;
+  }
+
+  ALLOWED_CHATS = options.allowedChats || (process.env.ALLOWED_CHAT_IDS
+    ? process.env.ALLOWED_CHAT_IDS.split(",").map((s) => s.trim())
+    : null);
+
+  if (!TOKEN) {
+    if (exitOnError) {
+      console.error("TELEGRAM_BOT_TOKEN required");
+      process.exit(1);
+    }
+    throw new Error("TELEGRAM_BOT_TOKEN required");
+  }
+  if (!API_KEY) {
+    if (exitOnError) {
+      console.error("NVIDIA_API_KEY required");
+      process.exit(1);
+    }
+    throw new Error("NVIDIA_API_KEY required");
+  }
+
+  return { OPENSHELL, TOKEN, API_KEY, SANDBOX, ALLOWED_CHATS };
 }
-
-const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const API_KEY = process.env.NVIDIA_API_KEY;
-const SANDBOX = process.env.SANDBOX_NAME || "nemoclaw";
-try { validateName(SANDBOX, "SANDBOX_NAME"); } catch (e) { console.error(e.message); process.exit(1); }
-const ALLOWED_CHATS = process.env.ALLOWED_CHAT_IDS
-  ? process.env.ALLOWED_CHAT_IDS.split(",").map((s) => s.trim())
-  : null;
-
-if (!TOKEN) { console.error("TELEGRAM_BOT_TOKEN required"); process.exit(1); }
-if (!API_KEY) { console.error("NVIDIA_API_KEY required"); process.exit(1); }
 
 let offset = 0;
 const activeSessions = new Map(); // chatId → message history
@@ -96,25 +152,88 @@ async function sendTyping(chatId) {
 
 // ── Run agent inside sandbox ──────────────────────────────────────
 
-function runAgentInSandbox(message, sessionId) {
+/**
+ * Sanitize session ID to contain only alphanumeric characters and hyphens.
+ * Returns null if the result is empty after sanitization.
+ *
+ * SECURITY: Leading hyphens are stripped to prevent option injection attacks.
+ * For example, a session ID of "--help" would otherwise be interpreted as a
+ * command-line flag by nemoclaw-start. This differs from SANDBOX_NAME validation
+ * (which uses validateName() requiring lowercase alphanumeric with internal hyphens)
+ * because session IDs come from Telegram chat IDs which can be negative numbers.
+ *
+ * @param {string|number} sessionId - The session ID to sanitize
+ * @returns {string|null} - Sanitized session ID or null if empty
+ */
+function sanitizeSessionId(sessionId) {
+  // Strip all non-alphanumeric characters except hyphens
+  const sanitized = String(sessionId).replace(/[^a-zA-Z0-9-]/g, "");
+  // Remove leading hyphens to prevent option injection (e.g., "--help", "-v")
+  const noLeadingHyphen = sanitized.replace(/^-+/, "");
+  return noLeadingHyphen.length > 0 ? noLeadingHyphen : null;
+}
+
+/**
+ * Run the OpenClaw agent inside the sandbox with the given message.
+ *
+ * SECURITY: This function passes user messages and API credentials via stdin
+ * instead of shell string interpolation to prevent command injection attacks.
+ * The remote script reads the API key from the first line of stdin and the
+ * message from the remaining stdin, then uses them in double-quoted variables
+ * which prevents shell interpretation.
+ *
+ * @param {string} message - The user message to send to the agent
+ * @param {string|number} sessionId - The session identifier (typically Telegram chat ID)
+ * @param {object} [options] - Optional overrides for testing
+ * @param {string} [options.apiKey] - Override API key (defaults to process.env.NVIDIA_API_KEY)
+ * @param {string} [options.sandbox] - Override sandbox name (defaults to SANDBOX)
+ * @param {string} [options.openshell] - Override openshell path (defaults to OPENSHELL)
+ * @returns {Promise<string>} - The agent's response
+ */
+function runAgentInSandbox(message, sessionId, options = {}) {
+  const apiKey = options.apiKey || API_KEY;
+  const sandbox = options.sandbox || SANDBOX;
+  const openshell = options.openshell || OPENSHELL;
+
   return new Promise((resolve) => {
-    const sshConfig = execFileSync(OPENSHELL, ["sandbox", "ssh-config", SANDBOX], { encoding: "utf-8" });
+    // Sanitize session ID - reject if empty after sanitization
+    const safeSessionId = sanitizeSessionId(sessionId);
+    if (!safeSessionId) {
+      resolve("Error: Invalid session ID");
+      return;
+    }
 
-    // Write temp ssh config with unpredictable name
-    const confDir = require("fs").mkdtempSync("/tmp/nemoclaw-tg-ssh-");
+    // Get SSH config using execFileSync (no shell interpretation)
+    const sshConfig = execFileSync(openshell, ["sandbox", "ssh-config", sandbox], { encoding: "utf-8" });
+
+    // Write temp ssh config with cryptographically unpredictable path
+    // to prevent symlink race attacks (CWE-377)
+    const confDir = fs.mkdtempSync("/tmp/nemoclaw-tg-ssh-");
     const confPath = `${confDir}/config`;
-    require("fs").writeFileSync(confPath, sshConfig, { mode: 0o600 });
+    fs.writeFileSync(confPath, sshConfig, { mode: 0o600 });
 
-    // Pass message and API key via stdin to avoid shell interpolation.
-    // The remote command reads them from environment/stdin rather than
-    // embedding user content in a shell string.
-    const safeSessionId = String(sessionId).replace(/[^a-zA-Z0-9-]/g, "");
-    const cmd = `export NVIDIA_API_KEY=${shellQuote(API_KEY)} && nemoclaw-start openclaw agent --agent main --local -m ${shellQuote(message)} --session-id ${shellQuote("tg-" + safeSessionId)}`;
+    // SECURITY FIX: Pass API key and message via stdin instead of shell interpolation.
+    // The remote script:
+    // 1. Reads API key from first line of stdin
+    // 2. Exports it as environment variable
+    // 3. Reads message from remaining stdin
+    // 4. Passes message to nemoclaw-start in double quotes (no shell expansion)
+    const remoteScript = [
+      "read -r NVIDIA_API_KEY",
+      "export NVIDIA_API_KEY",
+      "MSG=$(cat)",
+      `exec nemoclaw-start openclaw agent --agent main --local -m "$MSG" --session-id "tg-${safeSessionId}"`,
+    ].join(" && ");
 
-    const proc = spawn("ssh", ["-T", "-F", confPath, `openshell-${SANDBOX}`, cmd], {
+    const proc = spawn("ssh", ["-T", "-F", confPath, `openshell-${sandbox}`, remoteScript], {
       timeout: 120000,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "pipe"], // Enable stdin
     });
+
+    // Write API key (first line) and message (remaining) to stdin
+    proc.stdin.write(apiKey + "\n");
+    proc.stdin.write(message);
+    proc.stdin.end();
 
     let stdout = "";
     let stderr = "";
@@ -123,7 +242,11 @@ function runAgentInSandbox(message, sessionId) {
     proc.stderr.on("data", (d) => (stderr += d.toString()));
 
     proc.on("close", (code) => {
-      try { require("fs").unlinkSync(confPath); require("fs").rmdirSync(confDir); } catch { /* ignored */ }
+      // Clean up temp files
+      try {
+        fs.unlinkSync(confPath);
+        fs.rmdirSync(confDir);
+      } catch { /* ignored */ }
 
       // Extract the actual agent response — skip setup lines
       const lines = stdout.split("\n");
@@ -153,6 +276,11 @@ function runAgentInSandbox(message, sessionId) {
     });
 
     proc.on("error", (err) => {
+      // Clean up temp files on error
+      try {
+        fs.unlinkSync(confPath);
+        fs.rmdirSync(confDir);
+      } catch { /* ignored */ }
       resolve(`Error: ${err.message}`);
     });
   });
@@ -199,6 +327,16 @@ async function poll() {
         if (msg.text === "/reset") {
           activeSessions.delete(chatId);
           await sendMessage(chatId, "Session reset.", msg.message_id);
+          continue;
+        }
+
+        // Message length validation
+        if (msg.text.length > MAX_MESSAGE_LENGTH) {
+          await sendMessage(
+            chatId,
+            `Message too long (${msg.text.length} chars). Maximum is ${MAX_MESSAGE_LENGTH} characters.`,
+            msg.message_id,
+          );
           continue;
         }
 
@@ -250,6 +388,9 @@ async function poll() {
 // ── Main ──────────────────────────────────────────────────────────
 
 async function main() {
+  // Initialize configuration from environment
+  initConfig();
+
   const me = await tgApi("getMe", {});
   if (!me.ok) {
     console.error("Failed to connect to Telegram:", JSON.stringify(me));
@@ -273,4 +414,15 @@ async function main() {
   poll();
 }
 
-main();
+// Only run main() if this is the entry point (not imported for testing)
+if (require.main === module) {
+  main();
+}
+
+// Export for testing
+module.exports = {
+  runAgentInSandbox,
+  sanitizeSessionId,
+  initConfig,
+  MAX_MESSAGE_LENGTH,
+};
