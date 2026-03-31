@@ -32,11 +32,13 @@ function createMockBridge() {
   const cacheKey = require.resolve("../scripts/telegram-bridge.js");
   delete require.cache[cacheKey];
 
-  // Mock resolveOpenshell
+  // Mock resolveOpenshell - use Object.assign to satisfy TypeScript's Module type
   const resolveOpenshellPath = require.resolve("../bin/lib/resolve-openshell");
-  require.cache[resolveOpenshellPath] = {
+  const originalModule = require.cache[resolveOpenshellPath];
+  // @ts-ignore - intentional partial mock for testing
+  require.cache[resolveOpenshellPath] = Object.assign({}, originalModule, {
     exports: { resolveOpenshell: () => "/mock/openshell" },
-  };
+  });
 
   // Import the module
   const bridge = require("../scripts/telegram-bridge.js");

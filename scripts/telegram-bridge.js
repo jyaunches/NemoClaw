@@ -149,10 +149,10 @@ function sanitizeSessionId(sessionId) {
  *
  * @param {string} message - The user message to send to the agent
  * @param {string|number} sessionId - The session identifier (typically Telegram chat ID)
- * @param {object} options - Optional overrides for testing
- * @param {string} options.apiKey - Override API key (defaults to process.env.NVIDIA_API_KEY)
- * @param {string} options.sandbox - Override sandbox name (defaults to SANDBOX)
- * @param {string} options.openshell - Override openshell path (defaults to OPENSHELL)
+ * @param {object} [options] - Optional overrides for testing
+ * @param {string} [options.apiKey] - Override API key (defaults to process.env.NVIDIA_API_KEY)
+ * @param {string} [options.sandbox] - Override sandbox name (defaults to SANDBOX)
+ * @param {string} [options.openshell] - Override openshell path (defaults to OPENSHELL)
  * @returns {Promise<string>} - The agent's response
  */
 function runAgentInSandbox(message, sessionId, options = {}) {
