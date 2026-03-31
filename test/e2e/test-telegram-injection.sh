@@ -473,7 +473,7 @@ require.cache[resolveOpenshellPath] = {
   exports: { resolveOpenshell: () => process.env.OPENSHELL_PATH || 'openshell' }
 };
 
-const bridge = require('./scripts/telegram-bridge.js');
+const bridge = require(path.join(process.cwd(), 'scripts/telegram-bridge.js'));
 
 async function test() {
   const message = process.argv[2] || 'Hello';
@@ -650,12 +650,13 @@ section "Phase 9: Session ID Option Injection"
 info "T14: Testing sanitizeSessionId strips leading hyphens..."
 
 t14_result=$(cd "$REPO" && node -e "
+  const path = require('path');
   // Mock resolveOpenshell to avoid PATH dependency
   const resolveOpenshellPath = require.resolve('./bin/lib/resolve-openshell');
   require.cache[resolveOpenshellPath] = {
     exports: { resolveOpenshell: () => '/mock/openshell' }
   };
-  const bridge = require('./scripts/telegram-bridge.js');
+  const bridge = require(path.join(process.cwd(), 'scripts/telegram-bridge.js'));
 
   // Test cases for option injection prevention
   const tests = [
@@ -703,7 +704,7 @@ const resolveOpenshellPath = require.resolve(path.join(process.cwd(), 'bin/lib/r
 require.cache[resolveOpenshellPath] = {
   exports: { resolveOpenshell: () => process.env.OPENSHELL_PATH || 'openshell' }
 };
-const bridge = require('./scripts/telegram-bridge.js');
+const bridge = require(path.join(process.cwd(), 'scripts/telegram-bridge.js'));
 
 // Just test the sanitization with a negative chat ID (like Telegram groups)
 const sessionId = process.argv[2] || '--help';
@@ -750,11 +751,12 @@ section "Phase 10: Empty and Edge Case Messages"
 info "T16: Testing empty session ID handling..."
 
 t16_result=$(cd "$REPO" && node -e "
+  const path = require('path');
   const resolveOpenshellPath = require.resolve('./bin/lib/resolve-openshell');
   require.cache[resolveOpenshellPath] = {
     exports: { resolveOpenshell: () => '/mock/openshell' }
   };
-  const bridge = require('./scripts/telegram-bridge.js');
+  const bridge = require(path.join(process.cwd(), 'scripts/telegram-bridge.js'));
 
   const result = bridge.sanitizeSessionId('');
   if (result === null) {
@@ -776,11 +778,12 @@ fi
 info "T17: Testing session ID with only special characters..."
 
 t17_result=$(cd "$REPO" && node -e "
+  const path = require('path');
   const resolveOpenshellPath = require.resolve('./bin/lib/resolve-openshell');
   require.cache[resolveOpenshellPath] = {
     exports: { resolveOpenshell: () => '/mock/openshell' }
   };
-  const bridge = require('./scripts/telegram-bridge.js');
+  const bridge = require(path.join(process.cwd(), 'scripts/telegram-bridge.js'));
 
   const testCases = [
     { input: ';;;', expected: null },
