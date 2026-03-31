@@ -60,8 +60,11 @@ function shellEscape(value) {
   return value.replace(/'/g, "'\\''");
 }
 
-/** Run a command on the remote VM with secrets passed via stdin (not CLI args). */
-function sshWithSecrets(cmd, { timeout = 600_000, stream = false } = {}) {
+/** Write secrets to a temp file on the remote VM (called once during setup). */
+let remoteSecretsFile = null;
+function setupRemoteSecrets() {
+  if (remoteSecretsFile) return;
+  remoteSecretsFile = "/tmp/.e2e-secrets";
   const secretPreamble = [
     `export NVIDIA_API_KEY='${shellEscape(process.env.NVIDIA_API_KEY)}'`,
     `export GITHUB_TOKEN='${shellEscape(process.env.GITHUB_TOKEN)}'`,
@@ -69,18 +72,33 @@ function sshWithSecrets(cmd, { timeout = 600_000, stream = false } = {}) {
     `export NEMOCLAW_SANDBOX_NAME=e2e-test`,
   ].join("\n");
 
+  // Write secrets via stdin to avoid them appearing in command line
+  execSync(
+    `ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR "${INSTANCE_NAME}" 'cat > ${remoteSecretsFile} && chmod 600 ${remoteSecretsFile}'`,
+    {
+      encoding: "utf-8",
+      timeout: 30_000,
+      input: secretPreamble,
+      stdio: ["pipe", "pipe", "pipe"],
+    },
+  );
+}
+
+/** Run a command on the remote VM with secrets sourced from temp file. */
+function sshWithSecrets(cmd, { timeout = 600_000, stream = false } = {}) {
+  setupRemoteSecrets();
+
   // When stream=true, pipe stdout/stderr to the CI log in real time
   // so long-running steps (bootstrap) show progress instead of silence.
   /** @type {import("child_process").StdioOptions} */
-  const stdio = stream ? ["pipe", "inherit", "inherit"] : ["pipe", "pipe", "pipe"];
+  const stdio = stream ? ["inherit", "inherit", "inherit"] : ["pipe", "pipe", "pipe"];
 
-  // Pipe secrets via stdin so they don't appear in ps/process listings
+  const escaped = cmd.replace(/'/g, "'\\''");
   const result = execSync(
-    `ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR "${INSTANCE_NAME}" 'eval "$(cat)" && ${cmd.replace(/'/g, "'\\''")}'`,
+    `ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR "${INSTANCE_NAME}" 'source ${remoteSecretsFile} && ${escaped}'`,
     {
       encoding: "utf-8",
       timeout,
-      input: secretPreamble,
       stdio,
     },
   );
@@ -217,6 +235,16 @@ REGISTRY`,
 
   afterAll(() => {
     if (!instanceCreated) return;
+
+    // Clean up secrets file
+    if (remoteSecretsFile) {
+      try {
+        ssh(`rm -f ${remoteSecretsFile}`, { timeout: 10_000 });
+      } catch {
+        // Best-effort cleanup
+      }
+    }
+
     if (process.env.KEEP_ALIVE === "true") {
       console.log(`\n  Instance "${INSTANCE_NAME}" kept alive for debugging.`);
       console.log(`  To connect: brev refresh && ssh ${INSTANCE_NAME}`);
