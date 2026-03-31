@@ -153,6 +153,17 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
     );
     console.log(`[${elapsed()}] Code synced`);
 
+    // Wait for apt locks to be released — Brev's own provisioning may still
+    // be running apt-get when our script starts.
+    console.log(`[${elapsed()}] Waiting for apt locks to clear...`);
+    ssh(
+      `for i in $(seq 1 60); do ` +
+      `fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock >/dev/null 2>&1 || break; ` +
+      `echo "apt lock held, waiting... ($i/60)"; sleep 5; done`,
+      { timeout: 330_000, stream: true },
+    );
+    console.log(`[${elapsed()}] apt locks clear`);
+
     // Bootstrap VM — stream output to CI log so we can see progress
     console.log(`[${elapsed()}] Running brev-setup.sh (bootstrap)...`);
     sshEnv(`cd ${remoteDir} && SKIP_VLLM=1 bash scripts/brev-setup.sh`, { timeout: 2_400_000, stream: true });
