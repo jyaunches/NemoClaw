@@ -90,6 +90,12 @@ describe("nemoclaw-start auto-pair client whitelisting (#117)", () => {
     expect(src).not.toMatch(/\(device or \{\}\)\.get\('requestId'\)/);
   });
 
+  it("tracks handled requests to avoid reprocessing rejected devices", () => {
+    expect(src).toMatch(/HANDLED\s*=\s*set\(\)/);
+    expect(src).toMatch(/request_id in HANDLED/);
+    expect(src).toMatch(/HANDLED\.add\(request_id\)/);
+  });
+
   it("documents NEMOCLAW_DISABLE_DEVICE_AUTH in the script header", () => {
     expect(src).toMatch(/NEMOCLAW_DISABLE_DEVICE_AUTH/);
   });

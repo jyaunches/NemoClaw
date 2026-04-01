@@ -96,7 +96,7 @@ chat_origin = f'{parsed.scheme}://{parsed.netloc}' if parsed.scheme and parsed.n
 origins = ['http://127.0.0.1:18789']; \
 origins = list(dict.fromkeys(origins + [chat_origin])); \
 disable_device_auth = os.environ.get('NEMOCLAW_DISABLE_DEVICE_AUTH', '') == '1'; \
-allow_insecure = parsed.scheme != 'https'; \
+allow_insecure = parsed.scheme == 'http'; \
 providers = { \
     provider_key: { \
         'baseUrl': inference_base_url, \

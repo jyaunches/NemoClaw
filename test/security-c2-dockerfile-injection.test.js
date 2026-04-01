@@ -324,10 +324,12 @@ describe("Gateway auth hardening: Dockerfile must not hardcode insecure auth def
     expect(src).toMatch(/'dangerouslyDisableDeviceAuth':\s*disable_device_auth/);
   });
 
-  it("allowInsecureAuth is derived from URL scheme", () => {
+  it("allowInsecureAuth is derived from URL scheme (explicit http allowlist)", () => {
     const src = fs.readFileSync(DOCKERFILE, "utf-8");
-    // Must derive insecure auth from the parsed URL scheme
-    expect(src).toMatch(/allow_insecure\s*=\s*parsed\.scheme\s*!=\s*'https'/);
+    // Must use explicit 'http' allowlist — not `!= 'https'` which would allow
+    // insecure auth for malformed or unknown schemes (CodeRabbit review on #123)
+    expect(src).toMatch(/allow_insecure\s*=\s*parsed\.scheme\s*==\s*'http'/);
+    expect(src).not.toMatch(/allow_insecure\s*=\s*parsed\.scheme\s*!=\s*'https'/);
     // And use the derived variable in the config dict
     expect(src).toMatch(/'allowInsecureAuth':\s*allow_insecure/);
   });
