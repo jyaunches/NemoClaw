@@ -37,13 +37,29 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 export NEEDRESTART_MODE=a
 export DEBIAN_FRONTEND=noninteractive
 
+# ── GPU detection ─────────────────────────────────────────────────
+# Brev GPU images ship the nvidia-smi binary even on CPU-only instances.
+# We need nvidia-smi to actually *run* (driver loaded) to treat this as
+# a GPU host.  Export a flag so every later section uses the same check.
+if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1; then
+  HAS_GPU=true
+else
+  HAS_GPU=false
+fi
+info "GPU detected: $HAS_GPU"
+
 # ── Acquire exclusive apt access ──────────────────────────────────
 # Cloud VMs run multiple apt processes on boot: cloud-init, apt-daily,
 # and unattended-upgrades. We must wait for cloud-init AND disable the
 # background services before we can safely use apt ourselves.
+APT_WAIT_MAX=300   # seconds — fail if apt is still busy after 5 min
+APT_QUIET_WINDOW=5 # seconds — apt must be idle this long before we proceed
+
 if command -v cloud-init >/dev/null 2>&1; then
   info "Waiting for cloud-init to finish..."
-  cloud-init status --wait >/dev/null 2>&1 || true
+  if ! cloud-init status --wait >/dev/null 2>&1; then
+    warn "cloud-init exited with an error — proceeding, but the VM may be in an inconsistent state"
+  fi
   info "cloud-init done"
 fi
 # Stop background apt services that run independently of cloud-init
@@ -57,6 +73,26 @@ sudo pkill -9 -x dpkg 2>/dev/null || true
 # Release any stale locks left by killed processes
 sudo rm -f /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/cache/apt/archives/lock 2>/dev/null || true
 sudo dpkg --configure -a 2>/dev/null || true
+
+# Wait until apt/dpkg are truly idle for $APT_QUIET_WINDOW consecutive seconds.
+apt_waited=0
+apt_quiet=0
+while [ "$apt_quiet" -lt "$APT_QUIET_WINDOW" ]; do
+  if [ "$apt_waited" -ge "$APT_WAIT_MAX" ]; then
+    fail "apt/dpkg still busy after ${APT_WAIT_MAX}s — cannot proceed"
+  fi
+  if pgrep -Ex "apt-get|apt|dpkg" >/dev/null 2>&1 \
+    || fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/cache/apt/archives/lock 2>/dev/null; then
+    info "Waiting for apt/dpkg processes to finish... (${apt_waited}s elapsed)"
+    apt_quiet=0
+    sleep 2
+    apt_waited=$((apt_waited + 2))
+  else
+    apt_quiet=$((apt_quiet + 1))
+    sleep 1
+    apt_waited=$((apt_waited + 1))
+  fi
+done
 info "apt is now exclusively ours"
 
 # --- 0. Node.js (needed for services) ---
@@ -110,9 +146,7 @@ else
 fi
 
 # --- 2. NVIDIA Container Toolkit (if GPU present) ---
-# Check that nvidia-smi actually works, not just that the binary exists.
-# Brev GPU images ship nvidia-smi even on CPU-only instances.
-if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1; then
+if [ "$HAS_GPU" = true ]; then
   if ! dpkg -s nvidia-container-toolkit >/dev/null 2>&1; then
     info "Installing NVIDIA Container Toolkit..."
     curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
@@ -192,7 +226,7 @@ fi
 VLLM_MODEL="nvidia/nemotron-3-nano-30b-a3b"
 if [ "${SKIP_VLLM:-}" = "1" ]; then
   info "Skipping vLLM install (SKIP_VLLM=1)"
-elif command -v nvidia-smi >/dev/null 2>&1; then
+elif [ "$HAS_GPU" = true ]; then
   if ! python3 -c "import vllm" 2>/dev/null; then
     info "Installing vLLM..."
     if ! command -v pip3 >/dev/null 2>&1; then
