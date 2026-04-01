@@ -89,7 +89,8 @@ concurrency:
 
 jobs:
   e2e-brev:
-    if: github.repository == 'NVIDIA/NemoClaw'
+    # Temporarily allow fork for E2E validation — restore before merging
+    if: github.repository == 'NVIDIA/NemoClaw' || github.repository == 'jyaunches/NemoClaw'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
