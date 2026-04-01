@@ -17,8 +17,7 @@
  *
  * Optional env vars:
  *   TEST_SUITE       — which test to run: full (default), credential-sanitization, telegram-injection, all
- *   BREV_MIN_VCPU    — Minimum vCPUs for CPU instance (default: 4)
- *   BREV_MIN_RAM     — Minimum RAM in GB for CPU instance (default: 16)
+ *   BREV_INSTANCE_TYPE — Brev/GCP instance type (default: n2-standard-4)
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -28,8 +27,8 @@ import { homedir } from "node:os";
 import path from "node:path";
 
 // CPU instance specs: min vCPUs and RAM for the instance search
-const BREV_MIN_VCPU = parseInt(process.env.BREV_MIN_VCPU || "4", 10);
-const BREV_MIN_RAM = parseInt(process.env.BREV_MIN_RAM || "16", 10);
+// Use a known CPU-only GCP instance type to avoid GPU images with broken nvidia runtime
+const BREV_INSTANCE_TYPE = process.env.BREV_INSTANCE_TYPE || "n2-standard-4";
 const INSTANCE_NAME = process.env.INSTANCE_NAME;
 const TEST_SUITE = process.env.TEST_SUITE || "full";
 const REPO_DIR = path.resolve(import.meta.dirname, "../..");
@@ -58,19 +57,15 @@ function ssh(cmd, { timeout = 120_000, stream = false } = {}) {
   return stream ? "" : result.trim();
 }
 
-/**
- * Escape a value for safe inclusion in a single-quoted shell string.
- * Replaces single quotes with the shell-safe sequence: '\''
- */
-function shellEscape(value) {
-  return String(value).replace(/'/g, "'\\''");
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, "'\\''")}'`;
 }
 
 /** Run a command on the remote VM with env vars set for NemoClaw. */
 function sshEnv(cmd, { timeout = 600_000, stream = false } = {}) {
   const envPrefix = [
-    `export NVIDIA_API_KEY='${shellEscape(process.env.NVIDIA_API_KEY)}'`,
-    `export GITHUB_TOKEN='${shellEscape(process.env.GITHUB_TOKEN)}'`,
+    `export NVIDIA_API_KEY=${shellQuote(process.env.NVIDIA_API_KEY)}`,
+    `export GITHUB_TOKEN=${shellQuote(process.env.GITHUB_TOKEN)}`,
     `export NEMOCLAW_NON_INTERACTIVE=1`,
     `export NEMOCLAW_SANDBOX_NAME=e2e-test`,
   ].join(" && ");
@@ -131,14 +126,21 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
     );
     brev("login", "--token", process.env.BREV_API_TOKEN);
 
-    // Create bare CPU instance via brev search cpu | brev create
-    console.log(`[${elapsed()}] Creating CPU instance via brev search cpu | brev create...`);
-    console.log(`[${elapsed()}]   min-vcpu: ${BREV_MIN_VCPU}, min-ram: ${BREV_MIN_RAM}GB`);
-    execSync(
-      `brev search cpu --min-vcpu ${BREV_MIN_VCPU} --min-ram ${BREV_MIN_RAM} --sort price | ` +
-        `brev create ${INSTANCE_NAME} --detached`,
-      { encoding: "utf-8", timeout: 180_000, stdio: ["pipe", "inherit", "inherit"] },
-    );
+    // Delete any leftover instance from a previous failed run
+    try {
+      brev("delete", INSTANCE_NAME);
+      console.log(`[${elapsed()}] Deleted leftover instance "${INSTANCE_NAME}"`);
+    } catch {
+      // Expected — no leftover instance
+    }
+
+    // Create CPU instance with a known GCP instance type
+    console.log(`[${elapsed()}] Creating CPU instance (type: ${BREV_INSTANCE_TYPE})...`);
+    execSync(`brev create --type ${BREV_INSTANCE_TYPE} ${INSTANCE_NAME} --detached`, {
+      encoding: "utf-8",
+      timeout: 180_000,
+      stdio: ["pipe", "inherit", "inherit"],
+    });
     instanceCreated = true;
     console.log(`[${elapsed()}] brev create returned (instance provisioning in background)`);
 
@@ -160,6 +162,11 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
       { encoding: "utf-8", timeout: 120_000 },
     );
     console.log(`[${elapsed()}] Code synced`);
+
+    // Wait for cloud-init to finish — Brev instances run apt provisioning on boot
+    console.log(`[${elapsed()}] Waiting for cloud-init to finish...`);
+    ssh(`cloud-init status --wait 2>/dev/null || true`, { timeout: 600_000, stream: true });
+    console.log(`[${elapsed()}] cloud-init done`);
 
     // Bootstrap VM — stream output to CI log so we can see progress
     console.log(`[${elapsed()}] Running brev-setup.sh (bootstrap)...`);

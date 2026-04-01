@@ -37,6 +37,64 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 export NEEDRESTART_MODE=a
 export DEBIAN_FRONTEND=noninteractive
 
+# ── GPU detection ─────────────────────────────────────────────────
+# Brev GPU images ship the nvidia-smi binary even on CPU-only instances.
+# We need nvidia-smi to actually *run* (driver loaded) to treat this as
+# a GPU host.  Export a flag so every later section uses the same check.
+if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1; then
+  HAS_GPU=true
+else
+  HAS_GPU=false
+fi
+info "GPU detected: $HAS_GPU"
+
+# ── Acquire exclusive apt access ──────────────────────────────────
+# Cloud VMs run multiple apt processes on boot: cloud-init, apt-daily,
+# and unattended-upgrades. We must wait for cloud-init AND disable the
+# background services before we can safely use apt ourselves.
+APT_WAIT_MAX=300   # seconds — fail if apt is still busy after 5 min
+APT_QUIET_WINDOW=5 # seconds — apt must be idle this long before we proceed
+
+if command -v cloud-init >/dev/null 2>&1; then
+  info "Waiting for cloud-init to finish..."
+  if ! cloud-init status --wait >/dev/null 2>&1; then
+    warn "cloud-init exited with an error — proceeding, but the VM may be in an inconsistent state"
+  fi
+  info "cloud-init done"
+fi
+# Stop background apt services that run independently of cloud-init
+info "Disabling background apt services..."
+sudo systemctl stop apt-daily.timer apt-daily-upgrade.timer unattended-upgrades 2>/dev/null || true
+sudo systemctl disable apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true
+# Kill any straggler apt/dpkg processes
+sudo pkill -9 -x apt-get 2>/dev/null || true
+sudo pkill -9 -x apt 2>/dev/null || true
+sudo pkill -9 -x dpkg 2>/dev/null || true
+# Release any stale locks left by killed processes
+sudo rm -f /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/cache/apt/archives/lock 2>/dev/null || true
+sudo dpkg --configure -a 2>/dev/null || true
+
+# Wait until apt/dpkg are truly idle for $APT_QUIET_WINDOW consecutive seconds.
+apt_waited=0
+apt_quiet=0
+while [ "$apt_quiet" -lt "$APT_QUIET_WINDOW" ]; do
+  if [ "$apt_waited" -ge "$APT_WAIT_MAX" ]; then
+    fail "apt/dpkg still busy after ${APT_WAIT_MAX}s — cannot proceed"
+  fi
+  if pgrep -Ex "apt-get|apt|dpkg" >/dev/null 2>&1 \
+    || fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/cache/apt/archives/lock 2>/dev/null; then
+    info "Waiting for apt/dpkg processes to finish... (${apt_waited}s elapsed)"
+    apt_quiet=0
+    sleep 2
+    apt_waited=$((apt_waited + 2))
+  else
+    apt_quiet=$((apt_quiet + 1))
+    sleep 1
+    apt_waited=$((apt_waited + 1))
+  fi
+done
+info "apt is now exclusively ours"
+
 # --- 0. Node.js (needed for services) ---
 if ! command -v node >/dev/null 2>&1; then
   info "Installing Node.js..."
@@ -55,9 +113,16 @@ if ! command -v node >/dev/null 2>&1; then
     else
       fail "No SHA-256 verification tool found (need sha256sum or shasum)"
     fi
-    sudo -E bash "$tmpdir/setup_node.sh" >/dev/null 2>&1
+    sudo -E bash "$tmpdir/setup_node.sh"
   )
-  sudo apt-get install -y -qq nodejs >/dev/null 2>&1
+  for attempt in 1 2 3 4 5; do
+    if sudo apt-get install -y -qq nodejs; then
+      break
+    fi
+    [ "$attempt" -eq 5 ] && fail "Node.js install failed after 5 attempts"
+    info "Node.js install failed (attempt $attempt/5), retrying in 30s..."
+    sleep 30
+  done
   info "Node.js $(node --version) installed"
 else
   info "Node.js already installed: $(node --version)"
@@ -66,8 +131,14 @@ fi
 # --- 1. Docker ---
 if ! command -v docker >/dev/null 2>&1; then
   info "Installing Docker..."
-  sudo apt-get update -qq >/dev/null 2>&1
-  sudo apt-get install -y -qq docker.io >/dev/null 2>&1
+  for attempt in 1 2 3 4 5; do
+    if sudo apt-get update -qq && sudo apt-get install -y -qq docker.io; then
+      break
+    fi
+    [ "$attempt" -eq 5 ] && fail "Docker install failed after 5 attempts"
+    info "Docker install failed (attempt $attempt/5), retrying in 30s..."
+    sleep 30
+  done
   sudo usermod -aG docker "$(whoami)"
   info "Docker installed"
 else
@@ -75,7 +146,7 @@ else
 fi
 
 # --- 2. NVIDIA Container Toolkit (if GPU present) ---
-if command -v nvidia-smi >/dev/null 2>&1; then
+if [ "$HAS_GPU" = true ]; then
   if ! dpkg -s nvidia-container-toolkit >/dev/null 2>&1; then
     info "Installing NVIDIA Container Toolkit..."
     curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
@@ -90,6 +161,22 @@ if command -v nvidia-smi >/dev/null 2>&1; then
     info "NVIDIA Container Toolkit installed"
   else
     info "NVIDIA Container Toolkit already installed"
+  fi
+else
+  # CPU-only instance: ensure Docker uses runc (not nvidia) as default runtime.
+  # Brev GPU images pre-configure nvidia as the default Docker runtime even on
+  # CPU instances, causing "nvidia-container-cli: nvml error: driver not loaded"
+  # when starting containers.
+  if grep -q '"default-runtime".*nvidia' /etc/docker/daemon.json 2>/dev/null; then
+    info "Resetting Docker default runtime to runc (no GPU detected)..."
+    sudo python3 -c "
+import json
+with open('/etc/docker/daemon.json') as f: cfg = json.load(f)
+cfg.pop('default-runtime', None)
+with open('/etc/docker/daemon.json', 'w') as f: json.dump(cfg, f, indent=2)
+"
+    sudo systemctl restart docker
+    info "Docker runtime reset to runc"
   fi
 fi
 
@@ -139,7 +226,7 @@ fi
 VLLM_MODEL="nvidia/nemotron-3-nano-30b-a3b"
 if [ "${SKIP_VLLM:-}" = "1" ]; then
   info "Skipping vLLM install (SKIP_VLLM=1)"
-elif command -v nvidia-smi >/dev/null 2>&1; then
+elif [ "$HAS_GPU" = true ]; then
   if ! python3 -c "import vllm" 2>/dev/null; then
     info "Installing vLLM..."
     if ! command -v pip3 >/dev/null 2>&1; then
