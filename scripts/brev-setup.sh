@@ -51,7 +51,7 @@ wait_for_apt() {
   done
   # Wait for any apt processes to fully exit — locks can be released
   # momentarily between apt operations in a multi-step provisioning sequence
-  while pgrep -x "apt-get\|apt\|dpkg" >/dev/null 2>&1; do
+  while pgrep -Ex "apt-get|apt|dpkg" >/dev/null 2>&1; do
     info "Waiting for apt/dpkg processes to finish..."
     sleep 5
   done

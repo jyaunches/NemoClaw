@@ -58,11 +58,15 @@ function ssh(cmd, { timeout = 120_000, stream = false } = {}) {
   return stream ? "" : result.trim();
 }
 
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, "'\\''")}'`;
+}
+
 /** Run a command on the remote VM with env vars set for NemoClaw. */
 function sshEnv(cmd, { timeout = 600_000, stream = false } = {}) {
   const envPrefix = [
-    `export NVIDIA_API_KEY='${process.env.NVIDIA_API_KEY}'`,
-    `export GITHUB_TOKEN='${process.env.GITHUB_TOKEN}'`,
+    `export NVIDIA_API_KEY=${shellQuote(process.env.NVIDIA_API_KEY)}`,
+    `export GITHUB_TOKEN=${shellQuote(process.env.GITHUB_TOKEN)}`,
     `export NEMOCLAW_NON_INTERACTIVE=1`,
     `export NEMOCLAW_SANDBOX_NAME=e2e-test`,
   ].join(" && ");
@@ -168,7 +172,7 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
     ssh(
       `for i in $(seq 1 120); do ` +
         `if fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/cache/apt/archives/lock >/dev/null 2>&1 || ` +
-        `pgrep -x "apt-get|apt|dpkg" >/dev/null 2>&1; then ` +
+        `pgrep -Ex "apt-get|apt|dpkg" >/dev/null 2>&1; then ` +
         `echo "apt still running... ($i/120)"; sleep 5; ` +
         `else break; fi; done`,
       { timeout: 660_000, stream: true },

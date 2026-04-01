@@ -583,9 +583,6 @@ else
   wait $BRIDGE_PID 2>/dev/null || true
 fi
 
-# Clean up test script
-rm -f /tmp/test-real-bridge.js
-
 # ══════════════════════════════════════════════════════════════════
 # Phase 8: Multi-line Message Handling
 # ══════════════════════════════════════════════════════════════════
