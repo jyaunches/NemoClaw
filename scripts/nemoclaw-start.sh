@@ -10,8 +10,9 @@
 # The config hash is verified at startup to detect tampering.
 #
 # Optional env:
-#   NVIDIA_API_KEY   API key for NVIDIA-hosted inference
-#   CHAT_UI_URL      Browser origin that will access the forwarded dashboard
+#   NVIDIA_API_KEY                API key for NVIDIA-hosted inference
+#   CHAT_UI_URL                   Browser origin that will access the forwarded dashboard
+#   NEMOCLAW_DISABLE_DEVICE_AUTH  Set to "1" to skip device-pairing auth (development only)
 
 set -euo pipefail
 
@@ -175,14 +176,23 @@ while time.time() < DEADLINE:
 
     if pending:
         QUIET_POLLS = 0
+        ALLOWED_CLIENTS = {'openclaw-control-ui'}
+        ALLOWED_MODES = {'webchat'}
         for device in pending:
-            request_id = (device or {}).get('requestId')
+            if not isinstance(device, dict):
+                continue
+            client_id = device.get('clientId', '')
+            client_mode = device.get('clientMode', '')
+            if client_id not in ALLOWED_CLIENTS and client_mode not in ALLOWED_MODES:
+                print(f'[auto-pair] rejected unknown client={client_id} mode={client_mode}')
+                continue
+            request_id = device.get('requestId')
             if not request_id:
                 continue
             arc, aout, aerr = run(OPENCLAW, 'devices', 'approve', request_id, '--json')
             if arc == 0:
                 APPROVED += 1
-                print(f'[auto-pair] approved request={request_id}')
+                print(f'[auto-pair] approved request={request_id} client={client_id}')
             elif aout or aerr:
                 print(f'[auto-pair] approve failed request={request_id}: {(aerr or aout)[:400]}')
         time.sleep(1)

@@ -59,3 +59,38 @@ describe("nemoclaw-start non-root fallback", () => {
     }
   });
 });
+
+describe("nemoclaw-start auto-pair client whitelisting (#117)", () => {
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+  it("defines ALLOWED_CLIENTS whitelist containing openclaw-control-ui", () => {
+    expect(src).toMatch(/ALLOWED_CLIENTS\s*=\s*\{.*'openclaw-control-ui'.*\}/);
+  });
+
+  it("defines ALLOWED_MODES whitelist containing webchat", () => {
+    expect(src).toMatch(/ALLOWED_MODES\s*=\s*\{.*'webchat'.*\}/);
+  });
+
+  it("rejects devices not in the whitelist", () => {
+    expect(src).toMatch(/client_id not in ALLOWED_CLIENTS and client_mode not in ALLOWED_MODES/);
+    expect(src).toMatch(/\[auto-pair\] rejected unknown client=/);
+  });
+
+  it("validates device is a dict before accessing fields", () => {
+    expect(src).toMatch(/if not isinstance\(device, dict\)/);
+  });
+
+  it("logs client identity on approval", () => {
+    expect(src).toMatch(/\[auto-pair\] approved request=\{request_id\} client=\{client_id\}/);
+  });
+
+  it("does not unconditionally approve all pending devices", () => {
+    // The old pattern: `(device or {}).get('requestId')` — approve everything
+    // Must NOT be present in the auto-pair block
+    expect(src).not.toMatch(/\(device or \{\}\)\.get\('requestId'\)/);
+  });
+
+  it("documents NEMOCLAW_DISABLE_DEVICE_AUTH in the script header", () => {
+    expect(src).toMatch(/NEMOCLAW_DISABLE_DEVICE_AUTH/);
+  });
+});
