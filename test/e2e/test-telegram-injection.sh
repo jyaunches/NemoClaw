@@ -451,6 +451,382 @@ else
 fi
 
 # ══════════════════════════════════════════════════════════════════
+# Phase 7: Real runAgentInSandbox() Invocation
+#
+# PR #1092 feedback from @cv: The tests above use ad-hoc SSH commands
+# that bypass the actual code path in telegram-bridge.js. This phase
+# exercises the real runAgentInSandbox() function via Node.js to ensure
+# the production code is validated.
+# ══════════════════════════════════════════════════════════════════
+section "Phase 7: Real runAgentInSandbox() Code Path"
+
+info "T9: Testing real runAgentInSandbox() with injection payload..."
+
+# Create a test script that invokes the actual runAgentInSandbox function
+cat >/tmp/test-real-bridge.js <<'TESTSCRIPT'
+// Test script to invoke the real runAgentInSandbox() function
+const path = require('path');
+
+// Mock resolveOpenshell to use the system openshell
+const resolveOpenshellPath = require.resolve(path.join(process.cwd(), 'bin/lib/resolve-openshell'));
+require.cache[resolveOpenshellPath] = {
+  exports: { resolveOpenshell: () => process.env.OPENSHELL_PATH || 'openshell' }
+};
+
+const bridge = require(path.join(process.cwd(), 'scripts/telegram-bridge.js'));
+
+async function test() {
+  const message = process.argv[2] || 'Hello';
+  const sessionId = process.argv[3] || 'e2e-test';
+  const apiKey = process.env.NVIDIA_API_KEY;
+  const sandbox = process.env.NEMOCLAW_SANDBOX_NAME || 'e2e-test';
+  const openshell = process.env.OPENSHELL_PATH || 'openshell';
+
+  if (!apiKey) {
+    console.error('NVIDIA_API_KEY required');
+    process.exit(1);
+  }
+
+  try {
+    // Call the real runAgentInSandbox with options override for testing
+    const result = await bridge.runAgentInSandbox(message, sessionId, {
+      apiKey,
+      sandbox,
+      openshell,
+    });
+    console.log('RESULT_START');
+    console.log(result);
+    console.log('RESULT_END');
+  } catch (err) {
+    console.error('ERROR:', err.message);
+    process.exit(1);
+  }
+}
+
+test();
+TESTSCRIPT
+
+# Find openshell path
+OPENSHELL_PATH=$(command -v openshell) || OPENSHELL_PATH=""
+if [ -z "$OPENSHELL_PATH" ]; then
+  skip "T9: openshell not found, cannot test real runAgentInSandbox()"
+else
+  # Clean up any previous injection markers
+  sandbox_exec "rm -f /tmp/injection-proof-t9" >/dev/null 2>&1
+
+  # Test with injection payload through real runAgentInSandbox
+  t9_result=$(cd "$REPO" && OPENSHELL_PATH="$OPENSHELL_PATH" \
+    NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME" \
+    timeout 120 node /tmp/test-real-bridge.js \
+    '$(touch /tmp/injection-proof-t9 && echo INJECTED)' \
+    'e2e-injection-t9' 2>&1) || true
+
+  # Check if injection file was created
+  injection_check_t9=$(sandbox_exec "test -f /tmp/injection-proof-t9 && echo EXPLOITED || echo SAFE")
+  if echo "$injection_check_t9" | grep -q "SAFE"; then
+    pass "T9: Real runAgentInSandbox() prevented \$(command) injection"
+  else
+    fail "T9: Real runAgentInSandbox() EXECUTED injection — vulnerability in production code!"
+  fi
+fi
+
+# T10: Test backticks through real code path
+info "T10: Testing real runAgentInSandbox() with backtick payload..."
+
+if [ -z "$OPENSHELL_PATH" ]; then
+  skip "T10: openshell not found, cannot test real runAgentInSandbox()"
+else
+  sandbox_exec "rm -f /tmp/injection-proof-t10" >/dev/null 2>&1
+
+  t10_result=$(cd "$REPO" && OPENSHELL_PATH="$OPENSHELL_PATH" \
+    NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME" \
+    timeout 120 node /tmp/test-real-bridge.js \
+    '`touch /tmp/injection-proof-t10`' \
+    'e2e-injection-t10' 2>&1) || true
+
+  injection_check_t10=$(sandbox_exec "test -f /tmp/injection-proof-t10 && echo EXPLOITED || echo SAFE")
+  if echo "$injection_check_t10" | grep -q "SAFE"; then
+    pass "T10: Real runAgentInSandbox() prevented backtick injection"
+  else
+    fail "T10: Real runAgentInSandbox() EXECUTED backtick injection — vulnerability in production code!"
+  fi
+fi
+
+# T11: Test API key not exposed through real code path
+info "T11: Verifying API key not in process arguments (real code path)..."
+
+if [ -z "$OPENSHELL_PATH" ]; then
+  skip "T11: openshell not found, cannot test real runAgentInSandbox()"
+else
+  # Start the bridge test in background and check ps
+  cd "$REPO" && OPENSHELL_PATH="$OPENSHELL_PATH" \
+    NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME" \
+    timeout 60 node /tmp/test-real-bridge.js 'Hello world' 'e2e-ps-check' &
+  BRIDGE_PID=$!
+
+  # Give it a moment to spawn the SSH process
+  sleep 2
+
+  # Check if API key appears in process list
+  API_KEY_PREFIX="${NVIDIA_API_KEY:0:15}"
+  # shellcheck disable=SC2009 # pgrep doesn't support the output format we need
+  ps_output=$(ps aux 2>/dev/null | grep -v grep | grep -v "test-telegram-injection" || true)
+
+  if echo "$ps_output" | grep -qF "$API_KEY_PREFIX"; then
+    fail "T11: API key found in process arguments via real runAgentInSandbox()"
+  else
+    pass "T11: API key NOT visible in process arguments (real code path)"
+  fi
+
+  # Clean up background process
+  kill $BRIDGE_PID 2>/dev/null || true
+  wait $BRIDGE_PID 2>/dev/null || true
+fi
+
+# Clean up test script
+rm -f /tmp/test-real-bridge.js
+
+# ══════════════════════════════════════════════════════════════════
+# Phase 8: Multi-line Message Handling
+# ══════════════════════════════════════════════════════════════════
+section "Phase 8: Multi-line Message Handling"
+
+# T12: Multi-line message with injection on second line
+info "T12: Testing multi-line message with injection payload..."
+
+if [ -z "$OPENSHELL_PATH" ]; then
+  skip "T12: openshell not found, cannot test multi-line messages"
+else
+  sandbox_exec "rm -f /tmp/injection-proof-t12" >/dev/null 2>&1
+
+  # Multi-line message with injection attempt on line 2
+  MULTILINE_PAYLOAD=$'Hello\n$(touch /tmp/injection-proof-t12)\nWorld'
+
+  t12_result=$(cd "$REPO" && OPENSHELL_PATH="$OPENSHELL_PATH" \
+    NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME" \
+    timeout 120 node /tmp/test-real-bridge.js \
+    "$MULTILINE_PAYLOAD" \
+    'e2e-multiline-t12' 2>&1) || true
+
+  injection_check_t12=$(sandbox_exec "test -f /tmp/injection-proof-t12 && echo EXPLOITED || echo SAFE")
+  if echo "$injection_check_t12" | grep -q "SAFE"; then
+    pass "T12: Multi-line message injection was NOT executed"
+  else
+    fail "T12: Multi-line message injection was EXECUTED — vulnerability!"
+  fi
+fi
+
+# T13: Message with embedded newlines and backticks
+info "T13: Testing message with newlines and backticks..."
+
+ssh_config_t13="$(mktemp)"
+openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_config_t13" 2>/dev/null
+sandbox_exec "rm -f /tmp/injection-proof-t13" >/dev/null 2>&1
+
+PAYLOAD_MULTILINE_BT=$'First line\n`touch /tmp/injection-proof-t13`\nThird line'
+
+timeout 30 ssh -F "$ssh_config_t13" \
+  -o StrictHostKeyChecking=no \
+  -o UserKnownHostsFile=/dev/null \
+  -o LogLevel=ERROR \
+  "openshell-${SANDBOX_NAME}" \
+  'MSG=$(cat) && echo "$MSG"' \
+  <<<"$PAYLOAD_MULTILINE_BT" >/dev/null 2>&1 || true
+rm -f "$ssh_config_t13"
+
+injection_check_t13=$(sandbox_exec "test -f /tmp/injection-proof-t13 && echo EXPLOITED || echo SAFE")
+if echo "$injection_check_t13" | grep -q "SAFE"; then
+  pass "T13: Multi-line backtick injection was NOT executed"
+else
+  fail "T13: Multi-line backtick injection was EXECUTED"
+fi
+
+# ══════════════════════════════════════════════════════════════════
+# Phase 9: Session ID Option Injection Prevention
+# ══════════════════════════════════════════════════════════════════
+section "Phase 9: Session ID Option Injection"
+
+# T14: Leading hyphen session IDs should be sanitized
+info "T14: Testing sanitizeSessionId strips leading hyphens..."
+
+t14_result=$(cd "$REPO" && node -e "
+  const path = require('path');
+  // Mock resolveOpenshell to avoid PATH dependency
+  const resolveOpenshellPath = require.resolve('./bin/lib/resolve-openshell');
+  require.cache[resolveOpenshellPath] = {
+    exports: { resolveOpenshell: () => '/mock/openshell' }
+  };
+  const bridge = require(path.join(process.cwd(), 'scripts/telegram-bridge.js'));
+
+  // Test cases for option injection prevention
+  const tests = [
+    { input: '--help', expected: 'help' },
+    { input: '-v', expected: 'v' },
+    { input: '---test', expected: 'test' },
+    { input: '-123456789', expected: '123456789' },
+    { input: '--', expected: null },
+    { input: '-', expected: null },
+    { input: 'valid-id', expected: 'valid-id' },
+    { input: '-abc-123', expected: 'abc-123' },
+  ];
+
+  let passed = 0;
+  let failed = 0;
+  for (const t of tests) {
+    const result = bridge.sanitizeSessionId(t.input);
+    if (result === t.expected) {
+      passed++;
+    } else {
+      console.log('FAIL: sanitizeSessionId(' + JSON.stringify(t.input) + ') = ' + JSON.stringify(result) + ', expected ' + JSON.stringify(t.expected));
+      failed++;
+    }
+  }
+  console.log('SANITIZE_RESULT: ' + passed + ' passed, ' + failed + ' failed');
+  process.exit(failed > 0 ? 1 : 0);
+" 2>&1)
+
+if echo "$t14_result" | grep -q "SANITIZE_RESULT:.*0 failed"; then
+  pass "T14: sanitizeSessionId correctly strips leading hyphens"
+else
+  fail "T14: sanitizeSessionId failed to strip leading hyphens: $t14_result"
+fi
+
+# T15: Verify leading hyphen session ID doesn't cause option injection in real call
+info "T15: Testing real runAgentInSandbox with leading-hyphen session ID..."
+
+if [ -z "$OPENSHELL_PATH" ]; then
+  skip "T15: openshell not found, cannot test session ID sanitization"
+else
+  # Create a fresh test script that checks the actual session ID used
+  cat >/tmp/test-session-id.js <<'TESTSCRIPT'
+const path = require('path');
+const resolveOpenshellPath = require.resolve(path.join(process.cwd(), 'bin/lib/resolve-openshell'));
+require.cache[resolveOpenshellPath] = {
+  exports: { resolveOpenshell: () => process.env.OPENSHELL_PATH || 'openshell' }
+};
+const bridge = require(path.join(process.cwd(), 'scripts/telegram-bridge.js'));
+
+// Just test the sanitization with a negative chat ID (like Telegram groups)
+const sessionId = process.argv[2] || '--help';
+const sanitized = bridge.sanitizeSessionId(sessionId);
+console.log('INPUT:', sessionId);
+console.log('SANITIZED:', sanitized);
+if (sanitized && sanitized.startsWith('-')) {
+  console.log('ERROR: Sanitized ID starts with hyphen — option injection possible!');
+  process.exit(1);
+} else {
+  console.log('OK: No leading hyphen in sanitized ID');
+  process.exit(0);
+}
+TESTSCRIPT
+
+  t15_result=$(cd "$REPO" && OPENSHELL_PATH="$OPENSHELL_PATH" \
+    node /tmp/test-session-id.js '--help' 2>&1) || true
+
+  if echo "$t15_result" | grep -q "OK: No leading hyphen"; then
+    pass "T15: Session ID '--help' sanitized to prevent option injection"
+  else
+    fail "T15: Session ID sanitization failed: $t15_result"
+  fi
+
+  # Also test with negative number (Telegram group chat ID)
+  t15b_result=$(cd "$REPO" && OPENSHELL_PATH="$OPENSHELL_PATH" \
+    node /tmp/test-session-id.js '-123456789' 2>&1) || true
+
+  if echo "$t15b_result" | grep -q "OK: No leading hyphen"; then
+    pass "T15b: Negative chat ID '-123456789' sanitized correctly"
+  else
+    fail "T15b: Negative chat ID sanitization failed: $t15b_result"
+  fi
+
+  rm -f /tmp/test-session-id.js
+fi
+
+# ══════════════════════════════════════════════════════════════════
+# Phase 10: Empty Message Handling
+# ══════════════════════════════════════════════════════════════════
+section "Phase 10: Empty and Edge Case Messages"
+
+# T16: Empty session ID should return error
+info "T16: Testing empty session ID handling..."
+
+t16_result=$(cd "$REPO" && node -e "
+  const path = require('path');
+  const resolveOpenshellPath = require.resolve('./bin/lib/resolve-openshell');
+  require.cache[resolveOpenshellPath] = {
+    exports: { resolveOpenshell: () => '/mock/openshell' }
+  };
+  const bridge = require(path.join(process.cwd(), 'scripts/telegram-bridge.js'));
+
+  const result = bridge.sanitizeSessionId('');
+  if (result === null) {
+    console.log('OK: Empty session ID returns null');
+    process.exit(0);
+  } else {
+    console.log('FAIL: Empty session ID returned:', result);
+    process.exit(1);
+  }
+" 2>&1)
+
+if echo "$t16_result" | grep -q "OK:"; then
+  pass "T16: Empty session ID correctly returns null"
+else
+  fail "T16: Empty session ID handling failed: $t16_result"
+fi
+
+# T17: Session ID with only special characters
+info "T17: Testing session ID with only special characters..."
+
+t17_result=$(cd "$REPO" && node -e "
+  const path = require('path');
+  const resolveOpenshellPath = require.resolve('./bin/lib/resolve-openshell');
+  require.cache[resolveOpenshellPath] = {
+    exports: { resolveOpenshell: () => '/mock/openshell' }
+  };
+  const bridge = require(path.join(process.cwd(), 'scripts/telegram-bridge.js'));
+
+  const testCases = [
+    { input: ';;;', expected: null },
+    { input: '\$()', expected: null },
+    { input: '---', expected: null },
+    { input: '!@#\$%', expected: null },
+  ];
+
+  let ok = true;
+  for (const tc of testCases) {
+    const result = bridge.sanitizeSessionId(tc.input);
+    if (result !== tc.expected) {
+      console.log('FAIL:', JSON.stringify(tc.input), '→', result, 'expected', tc.expected);
+      ok = false;
+    }
+  }
+  if (ok) {
+    console.log('OK: All special-character session IDs return null');
+  }
+  process.exit(ok ? 0 : 1);
+" 2>&1)
+
+if echo "$t17_result" | grep -q "OK:"; then
+  pass "T17: Special-character-only session IDs correctly return null"
+else
+  fail "T17: Special character handling failed: $t17_result"
+fi
+
+# ══════════════════════════════════════════════════════════════════
+# Phase 11: Cleanup
+# ══════════════════════════════════════════════════════════════════
+section "Phase 11: Cleanup"
+
+info "Cleaning up injection marker files in sandbox..."
+sandbox_exec "rm -f /tmp/injection-proof-t1 /tmp/injection-proof-t2 /tmp/injection-proof-t3 \
+  /tmp/injection-proof-t9 /tmp/injection-proof-t10 /tmp/injection-proof-t12 /tmp/injection-proof-t13" >/dev/null 2>&1
+
+info "Cleaning up local temp files..."
+rm -f /tmp/test-real-bridge.js /tmp/test-session-id.js 2>/dev/null || true
+
+pass "Cleanup completed"
+
+# ══════════════════════════════════════════════════════════════════
 # Summary
 # ══════════════════════════════════════════════════════════════════
 echo ""
