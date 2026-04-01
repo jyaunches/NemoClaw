@@ -89,8 +89,7 @@ concurrency:
 
 jobs:
   e2e-brev:
-    # Note: Remove this condition when testing on forks
-    # if: github.repository == 'NVIDIA/NemoClaw'
+    if: github.repository == 'NVIDIA/NemoClaw'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
