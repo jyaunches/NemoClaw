@@ -17,8 +17,7 @@
  *
  * Optional env vars:
  *   TEST_SUITE       — which test to run: full (default), credential-sanitization, telegram-injection, all
- *   BREV_MIN_VCPU    — Minimum vCPUs for CPU instance (default: 4)
- *   BREV_MIN_RAM     — Minimum RAM in GB for CPU instance (default: 16)
+ *   BREV_INSTANCE_TYPE — Brev/GCP instance type (default: n2-standard-4)
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -28,8 +27,8 @@ import { homedir } from "node:os";
 import path from "node:path";
 
 // CPU instance specs: min vCPUs and RAM for the instance search
-const BREV_MIN_VCPU = parseInt(process.env.BREV_MIN_VCPU || "4", 10);
-const BREV_MIN_RAM = parseInt(process.env.BREV_MIN_RAM || "16", 10);
+// Use a known CPU-only GCP instance type to avoid GPU images with broken nvidia runtime
+const BREV_INSTANCE_TYPE = process.env.BREV_INSTANCE_TYPE || "n2-standard-4";
 const INSTANCE_NAME = process.env.INSTANCE_NAME;
 const TEST_SUITE = process.env.TEST_SUITE || "full";
 const REPO_DIR = path.resolve(import.meta.dirname, "../..");
@@ -135,12 +134,10 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
       // Expected — no leftover instance
     }
 
-    // Create bare CPU instance via brev search cpu | brev create
-    console.log(`[${elapsed()}] Creating CPU instance via brev search cpu | brev create...`);
-    console.log(`[${elapsed()}]   min-vcpu: ${BREV_MIN_VCPU}, min-ram: ${BREV_MIN_RAM}GB`);
+    // Create CPU instance with a known GCP instance type
+    console.log(`[${elapsed()}] Creating CPU instance (type: ${BREV_INSTANCE_TYPE})...`);
     execSync(
-      `brev search cpu --min-vcpu ${BREV_MIN_VCPU} --min-ram ${BREV_MIN_RAM} --sort price | ` +
-        `brev create ${INSTANCE_NAME} --detached`,
+      `brev create --type ${BREV_INSTANCE_TYPE} ${INSTANCE_NAME} --detached`,
       { encoding: "utf-8", timeout: 180_000, stdio: ["pipe", "inherit", "inherit"] },
     );
     instanceCreated = true;
@@ -165,19 +162,10 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
     );
     console.log(`[${elapsed()}] Code synced`);
 
-    // Wait for Brev's provisioning to finish — it runs apt-get on boot
-    // and the locks can be released between operations, so we wait for
-    // both locks AND processes to be gone.
-    console.log(`[${elapsed()}] Waiting for Brev provisioning (apt) to finish...`);
-    ssh(
-      `for i in $(seq 1 120); do ` +
-        `if fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/cache/apt/archives/lock >/dev/null 2>&1 || ` +
-        `pgrep -Ex "apt-get|apt|dpkg" >/dev/null 2>&1; then ` +
-        `echo "apt still running... ($i/120)"; sleep 5; ` +
-        `else break; fi; done`,
-      { timeout: 660_000, stream: true },
-    );
-    console.log(`[${elapsed()}] apt done`);
+    // Wait for cloud-init to finish — Brev instances run apt provisioning on boot
+    console.log(`[${elapsed()}] Waiting for cloud-init to finish...`);
+    ssh(`cloud-init status --wait 2>/dev/null || true`, { timeout: 600_000, stream: true });
+    console.log(`[${elapsed()}] cloud-init done`);
 
     // Bootstrap VM — stream output to CI log so we can see progress
     console.log(`[${elapsed()}] Running brev-setup.sh (bootstrap)...`);
