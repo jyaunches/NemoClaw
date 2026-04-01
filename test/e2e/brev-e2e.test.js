@@ -136,7 +136,7 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
 
     // Create CPU instance with a known GCP instance type
     console.log(`[${elapsed()}] Creating CPU instance (type: ${BREV_INSTANCE_TYPE})...`);
-    execSync(`brev create --type ${BREV_INSTANCE_TYPE} ${INSTANCE_NAME} --detached`, {
+    execFileSync("brev", ["create", "--type", BREV_INSTANCE_TYPE, INSTANCE_NAME, "--detached"], {
       encoding: "utf-8",
       timeout: 180_000,
       stdio: ["pipe", "inherit", "inherit"],
