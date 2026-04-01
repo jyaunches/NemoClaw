@@ -37,8 +37,29 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 export NEEDRESTART_MODE=a
 export DEBIAN_FRONTEND=noninteractive
 
+# Wait for any existing apt locks (e.g. Brev's own provisioning on boot)
+wait_for_apt() {
+  local max_wait=300 # 5 minutes
+  local waited=0
+  while fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/cache/apt/archives/lock >/dev/null 2>&1; do
+    if [ $waited -ge $max_wait ]; then
+      fail "apt lock still held after ${max_wait}s — another process is stuck"
+    fi
+    info "Waiting for apt lock to be released... (${waited}s)"
+    sleep 10
+    waited=$((waited + 10))
+  done
+  # Wait for any apt processes to fully exit — locks can be released
+  # momentarily between apt operations in a multi-step provisioning sequence
+  while pgrep -x "apt-get\|apt\|dpkg" >/dev/null 2>&1; do
+    info "Waiting for apt/dpkg processes to finish..."
+    sleep 5
+  done
+}
+
 # --- 0. Node.js (needed for services) ---
 if ! command -v node >/dev/null 2>&1; then
+  wait_for_apt
   info "Installing Node.js..."
   NODESOURCE_URL="https://deb.nodesource.com/setup_22.x"
   NODESOURCE_SHA256="575583bbac2fccc0b5edd0dbc03e222d9f9dc8d724da996d22754d6411104fd1"
@@ -55,9 +76,17 @@ if ! command -v node >/dev/null 2>&1; then
     else
       fail "No SHA-256 verification tool found (need sha256sum or shasum)"
     fi
-    sudo -E bash "$tmpdir/setup_node.sh" >/dev/null 2>&1
+    sudo -E bash "$tmpdir/setup_node.sh"
   )
-  sudo apt-get install -y -qq nodejs >/dev/null 2>&1
+  # Retry apt-get install — Brev provisioning can grab the lock between operations
+  for attempt in 1 2 3 4 5; do
+    wait_for_apt
+    if sudo apt-get install -y -qq nodejs 2>&1; then
+      break
+    fi
+    info "apt-get install nodejs failed (attempt $attempt/5), retrying..."
+    sleep 10
+  done
   info "Node.js $(node --version) installed"
 else
   info "Node.js already installed: $(node --version)"
@@ -65,9 +94,16 @@ fi
 
 # --- 1. Docker ---
 if ! command -v docker >/dev/null 2>&1; then
+  wait_for_apt
   info "Installing Docker..."
-  sudo apt-get update -qq >/dev/null 2>&1
-  sudo apt-get install -y -qq docker.io >/dev/null 2>&1
+  for attempt in 1 2 3 4 5; do
+    wait_for_apt
+    if sudo apt-get update -qq >/dev/null 2>&1 && sudo apt-get install -y -qq docker.io >/dev/null 2>&1; then
+      break
+    fi
+    info "Docker install failed (attempt $attempt/5), retrying..."
+    sleep 10
+  done
   sudo usermod -aG docker "$(whoami)"
   info "Docker installed"
 else
@@ -75,7 +111,9 @@ else
 fi
 
 # --- 2. NVIDIA Container Toolkit (if GPU present) ---
-if command -v nvidia-smi >/dev/null 2>&1; then
+# Check that nvidia-smi actually works, not just that the binary exists.
+# Brev GPU images ship nvidia-smi even on CPU-only instances.
+if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1; then
   if ! dpkg -s nvidia-container-toolkit >/dev/null 2>&1; then
     info "Installing NVIDIA Container Toolkit..."
     curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
@@ -90,6 +128,22 @@ if command -v nvidia-smi >/dev/null 2>&1; then
     info "NVIDIA Container Toolkit installed"
   else
     info "NVIDIA Container Toolkit already installed"
+  fi
+else
+  # CPU-only instance: ensure Docker uses runc (not nvidia) as default runtime.
+  # Brev GPU images pre-configure nvidia as the default Docker runtime even on
+  # CPU instances, causing "nvidia-container-cli: nvml error: driver not loaded"
+  # when starting containers.
+  if grep -q '"default-runtime".*nvidia' /etc/docker/daemon.json 2>/dev/null; then
+    info "Resetting Docker default runtime to runc (no GPU detected)..."
+    sudo python3 -c "
+import json
+with open('/etc/docker/daemon.json') as f: cfg = json.load(f)
+cfg.pop('default-runtime', None)
+with open('/etc/docker/daemon.json', 'w') as f: json.dump(cfg, f, indent=2)
+"
+    sudo systemctl restart docker
+    info "Docker runtime reset to runc"
   fi
 fi
 

@@ -58,19 +58,11 @@ function ssh(cmd, { timeout = 120_000, stream = false } = {}) {
   return stream ? "" : result.trim();
 }
 
-/**
- * Escape a value for safe inclusion in a single-quoted shell string.
- * Replaces single quotes with the shell-safe sequence: '\''
- */
-function shellEscape(value) {
-  return String(value).replace(/'/g, "'\\''");
-}
-
 /** Run a command on the remote VM with env vars set for NemoClaw. */
 function sshEnv(cmd, { timeout = 600_000, stream = false } = {}) {
   const envPrefix = [
-    `export NVIDIA_API_KEY='${shellEscape(process.env.NVIDIA_API_KEY)}'`,
-    `export GITHUB_TOKEN='${shellEscape(process.env.GITHUB_TOKEN)}'`,
+    `export NVIDIA_API_KEY='${process.env.NVIDIA_API_KEY}'`,
+    `export GITHUB_TOKEN='${process.env.GITHUB_TOKEN}'`,
     `export NEMOCLAW_NON_INTERACTIVE=1`,
     `export NEMOCLAW_SANDBOX_NAME=e2e-test`,
   ].join(" && ");
@@ -131,6 +123,14 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
     );
     brev("login", "--token", process.env.BREV_API_TOKEN);
 
+    // Delete any leftover instance from a previous failed run
+    try {
+      brev("delete", INSTANCE_NAME);
+      console.log(`[${elapsed()}] Deleted leftover instance "${INSTANCE_NAME}"`);
+    } catch {
+      // Expected — no leftover instance
+    }
+
     // Create bare CPU instance via brev search cpu | brev create
     console.log(`[${elapsed()}] Creating CPU instance via brev search cpu | brev create...`);
     console.log(`[${elapsed()}]   min-vcpu: ${BREV_MIN_VCPU}, min-ram: ${BREV_MIN_RAM}GB`);
@@ -160,6 +160,20 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
       { encoding: "utf-8", timeout: 120_000 },
     );
     console.log(`[${elapsed()}] Code synced`);
+
+    // Wait for Brev's provisioning to finish — it runs apt-get on boot
+    // and the locks can be released between operations, so we wait for
+    // both locks AND processes to be gone.
+    console.log(`[${elapsed()}] Waiting for Brev provisioning (apt) to finish...`);
+    ssh(
+      `for i in $(seq 1 120); do ` +
+        `if fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/cache/apt/archives/lock >/dev/null 2>&1 || ` +
+        `pgrep -x "apt-get|apt|dpkg" >/dev/null 2>&1; then ` +
+        `echo "apt still running... ($i/120)"; sleep 5; ` +
+        `else break; fi; done`,
+      { timeout: 660_000, stream: true },
+    );
+    console.log(`[${elapsed()}] apt done`);
 
     // Bootstrap VM — stream output to CI log so we can see progress
     console.log(`[${elapsed()}] Running brev-setup.sh (bootstrap)...`);

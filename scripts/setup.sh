@@ -112,7 +112,8 @@ info "Starting OpenShell gateway..."
 openshell gateway destroy -g nemoclaw >/dev/null 2>&1 || true
 docker volume ls -q --filter "name=openshell-cluster-nemoclaw" | grep . && docker volume ls -q --filter "name=openshell-cluster-nemoclaw" | xargs docker volume rm || true
 GATEWAY_ARGS=(--name nemoclaw)
-command -v nvidia-smi >/dev/null 2>&1 && GATEWAY_ARGS+=(--gpu)
+# Only enable GPU if nvidia-smi actually works (driver loaded), not just present on PATH
+nvidia-smi >/dev/null 2>&1 && GATEWAY_ARGS+=(--gpu)
 if ! openshell gateway start "${GATEWAY_ARGS[@]}" 2>&1 | grep -E "Gateway|✓|Error|error"; then
   warn "Gateway start failed. Cleaning up stale state..."
   openshell gateway destroy -g nemoclaw >/dev/null 2>&1 || true
