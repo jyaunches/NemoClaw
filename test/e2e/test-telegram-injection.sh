@@ -464,7 +464,14 @@ info "T9: Testing real runAgentInSandbox() with injection payload..."
 
 # Create a test script that invokes the actual runAgentInSandbox function
 cat >/tmp/test-real-bridge.js <<'TESTSCRIPT'
-// Test script to invoke the real runAgentInSandbox() function
+// Test script to invoke the real runAgentInSandbox() function.
+//
+// NOTE: On unfixed code, this will fail because:
+//   1. runAgentInSandbox is not exported (no require.main guard)
+//   2. The function signature doesn't accept an options parameter
+//   3. initConfig() runs at require-time and fails without TELEGRAM_BOT_TOKEN
+// These failures are expected and prove the tests detect the missing fix.
+// After the fix PR is merged, this script will work correctly.
 const path = require('path');
 
 // Mock resolveOpenshell to use the system openshell
@@ -564,15 +571,20 @@ else
     timeout 60 node /tmp/test-real-bridge.js 'Hello world' 'e2e-ps-check' &
   BRIDGE_PID=$!
 
-  # Give it a moment to spawn the SSH process
-  sleep 2
-
-  # Check if API key appears in process list
+  # Poll the process list multiple times to catch short-lived SSH invocations
   API_KEY_PREFIX="${NVIDIA_API_KEY:0:15}"
-  # shellcheck disable=SC2009 # pgrep doesn't support the output format we need
-  ps_output=$(ps aux 2>/dev/null | grep -v grep | grep -v "test-telegram-injection" || true)
+  KEY_LEAKED=false
+  for _poll in $(seq 1 10); do
+    sleep 1
+    # shellcheck disable=SC2009 # pgrep doesn't support the output format we need
+    ps_output=$(ps aux 2>/dev/null | grep -v grep | grep -v "test-telegram-injection" || true)
+    if echo "$ps_output" | grep -qF "$API_KEY_PREFIX"; then
+      KEY_LEAKED=true
+      break
+    fi
+  done
 
-  if echo "$ps_output" | grep -qF "$API_KEY_PREFIX"; then
+  if [ "$KEY_LEAKED" = true ]; then
     fail "T11: API key found in process arguments via real runAgentInSandbox()"
   else
     pass "T11: API key NOT visible in process arguments (real code path)"
