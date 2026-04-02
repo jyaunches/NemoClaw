@@ -449,10 +449,19 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
       // manually. The onboard hangs on the dashboard port-forward step and
       // never writes sandboxes.json.
       console.log(`[${elapsed()}] Sandbox ready — killing hung onboard and writing registry...`);
-      ssh(
-        `pkill -f "nemoclaw onboard" 2>/dev/null || true; pkill -f "openshell sandbox create" 2>/dev/null || true; sleep 1`,
-        { timeout: 15_000 },
-      );
+      // Kill hung onboard processes. pkill may kill the SSH connection itself
+      // if the pattern matches too broadly, so wrap in try/catch.
+      try {
+        ssh(
+          `pkill -f "nemoclaw onboard" 2>/dev/null; pkill -f "openshell sandbox create" 2>/dev/null; sleep 1; true`,
+          { timeout: 15_000 },
+        );
+      } catch {
+        // SSH exit 255 is expected — pkill may terminate the connection
+        console.log(
+          `[${elapsed()}] pkill returned non-zero (expected — SSH connection may have been affected)`,
+        );
+      }
       // Write the sandbox registry using printf to avoid heredoc quoting issues over SSH
       const registryJson = JSON.stringify(
         {
