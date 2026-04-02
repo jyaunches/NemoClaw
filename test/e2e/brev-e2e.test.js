@@ -185,6 +185,17 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
     );
     brev("login", "--token", process.env.BREV_API_TOKEN);
 
+    // Pre-cleanup: delete any leftover instance with the same name.
+    // This can happen when a previous run's create succeeded on the backend
+    // but the CLI got a network error (unexpected EOF) before confirming,
+    // then the retry/fallback fails with "duplicate workspace".
+    try {
+      brev("delete", INSTANCE_NAME);
+      console.log(`[${elapsed()}] Deleted leftover instance "${INSTANCE_NAME}"`);
+    } catch {
+      // Expected — no leftover instance exists
+    }
+
     if (USE_LAUNCHABLE) {
       // ── Launchable path: pre-baked CI environment ──────────────────
       // Uses brev search cpu | brev create with --startup-script.
