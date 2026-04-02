@@ -221,11 +221,38 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
 
       // brev search cpu | brev create: finds cheapest CPU instance matching
       // our specs and creates it with the setup script attached.
-      execSync(
-        `brev search cpu --min-vcpu ${BREV_MIN_VCPU} --min-ram ${BREV_MIN_RAM} --sort price | ` +
-          `brev create ${INSTANCE_NAME} --startup-script @${setupScriptPath} --detached`,
-        { encoding: "utf-8", timeout: 180_000, stdio: ["pipe", "inherit", "inherit"] },
-      );
+      //
+      // The Brev API sometimes returns "unexpected EOF" after the instance
+      // is actually created server-side. The CLI then falls back to the next
+      // instance type, which fails with "duplicate workspace". To handle this,
+      // we catch create failures and check if the instance exists anyway.
+      try {
+        execSync(
+          `brev search cpu --min-vcpu ${BREV_MIN_VCPU} --min-ram ${BREV_MIN_RAM} --sort price | ` +
+            `brev create ${INSTANCE_NAME} --startup-script @${setupScriptPath} --detached`,
+          { encoding: "utf-8", timeout: 180_000, stdio: ["pipe", "inherit", "inherit"] },
+        );
+      } catch (createErr) {
+        console.log(
+          `[${elapsed()}] brev create exited with error — checking if instance was created anyway...`,
+        );
+        try {
+          brev("refresh");
+        } catch {
+          /* ignore */
+        }
+        const lsOutput = execSync(`brev ls 2>&1 || true`, { encoding: "utf-8", timeout: 30_000 });
+        if (!lsOutput.includes(INSTANCE_NAME)) {
+          throw new Error(
+            `brev create failed and instance "${INSTANCE_NAME}" not found in brev ls. ` +
+              `Original error: ${createErr.message}`,
+            { cause: createErr },
+          );
+        }
+        console.log(
+          `[${elapsed()}] Instance "${INSTANCE_NAME}" found in brev ls despite create error — proceeding`,
+        );
+      }
       instanceCreated = true;
       console.log(`[${elapsed()}] brev create returned (instance provisioning in background)`);
 
@@ -285,11 +312,33 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
       // Full bootstrap from scratch. Slower but doesn't require a launchable.
       console.log(`[${elapsed()}] Creating bare CPU instance via brev search cpu | brev create...`);
       console.log(`[${elapsed()}]   min-vcpu: ${BREV_MIN_VCPU}, min-ram: ${BREV_MIN_RAM}GB`);
-      execSync(
-        `brev search cpu --min-vcpu ${BREV_MIN_VCPU} --min-ram ${BREV_MIN_RAM} --sort price | ` +
-          `brev create ${INSTANCE_NAME} --detached`,
-        { encoding: "utf-8", timeout: 180_000, stdio: ["pipe", "inherit", "inherit"] },
-      );
+      try {
+        execSync(
+          `brev search cpu --min-vcpu ${BREV_MIN_VCPU} --min-ram ${BREV_MIN_RAM} --sort price | ` +
+            `brev create ${INSTANCE_NAME} --detached`,
+          { encoding: "utf-8", timeout: 180_000, stdio: ["pipe", "inherit", "inherit"] },
+        );
+      } catch (createErr) {
+        console.log(
+          `[${elapsed()}] brev create exited with error — checking if instance was created anyway...`,
+        );
+        try {
+          brev("refresh");
+        } catch {
+          /* ignore */
+        }
+        const lsOutput = execSync(`brev ls 2>&1 || true`, { encoding: "utf-8", timeout: 30_000 });
+        if (!lsOutput.includes(INSTANCE_NAME)) {
+          throw new Error(
+            `brev create failed and instance "${INSTANCE_NAME}" not found in brev ls. ` +
+              `Original error: ${createErr.message}`,
+            { cause: createErr },
+          );
+        }
+        console.log(
+          `[${elapsed()}] Instance "${INSTANCE_NAME}" found in brev ls despite create error — proceeding`,
+        );
+      }
       instanceCreated = true;
       console.log(`[${elapsed()}] brev create returned (instance provisioning in background)`);
 
