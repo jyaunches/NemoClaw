@@ -139,7 +139,8 @@ jobs:
 
       - name: Install Brev CLI
         run: |
-          # Use latest Brev CLI (v0.6.322+) — CPU instances require `brev search cpu | brev create`
+          # Brev CLI v0.6.322+ — CPU instances use `brev search cpu | brev create`
+          # Startup scripts use `brev create --startup-script @file` (not brev start --cpu)
           curl -fsSL -o /tmp/brev.tar.gz "https://github.com/brevdev/brev-cli/releases/download/v0.6.322/brev-cli_0.6.322_linux_amd64.tar.gz"
           tar -xzf /tmp/brev.tar.gz -C /usr/local/bin brev
           chmod +x /usr/local/bin/brev

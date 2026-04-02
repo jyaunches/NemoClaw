@@ -20,9 +20,8 @@
  *   TEST_SUITE             — which test to run: full (default), credential-sanitization, telegram-injection, all
  *   USE_LAUNCHABLE         — "1" (default) to use CI launchable, "0" for bare brev create + brev-setup.sh
  *   LAUNCHABLE_SETUP_SCRIPT — URL to setup script for launchable path (default: brev-launchable-ci-cpu.sh on main)
- *   BREV_CPU               — CPU spec for launchable path (default: 4x16)
- *   BREV_MIN_VCPU          — Minimum vCPUs for bare CPU instance (default: 4, only used when USE_LAUNCHABLE=0)
- *   BREV_MIN_RAM           — Minimum RAM in GB for bare CPU instance (default: 16, only used when USE_LAUNCHABLE=0)
+ *   BREV_MIN_VCPU          — Minimum vCPUs for CPU instance (default: 4)
+ *   BREV_MIN_RAM           — Minimum RAM in GB for CPU instance (default: 16)
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -40,16 +39,12 @@ const REPO_DIR = path.resolve(import.meta.dirname, "../..");
 
 // Launchable configuration
 // CI-Ready CPU setup script: pre-bakes Docker, Node.js, OpenShell CLI, npm deps, Docker images.
-// The Brev CLI uses --setup-script <URL> to run this on first boot.
+// The Brev CLI (v0.6.322+) uses `brev search cpu | brev create --startup-script @file`.
 // Override via LAUNCHABLE_SETUP_SCRIPT env var (e.g. to test a branch version of the script).
 const DEFAULT_SETUP_SCRIPT_URL =
   process.env.LAUNCHABLE_SETUP_SCRIPT ||
   "https://raw.githubusercontent.com/NVIDIA/NemoClaw/main/scripts/brev-launchable-ci-cpu.sh";
-const BREV_CPU = process.env.BREV_CPU || "4x16";
 const USE_LAUNCHABLE = !["0", "false"].includes(process.env.USE_LAUNCHABLE?.toLowerCase());
-
-// The NemoClaw repo URL — brev start clones this into the instance
-const NEMOCLAW_REPO_URL = "https://github.com/NVIDIA/NemoClaw.git";
 
 // Sentinel file written by brev-launchable-ci-cpu.sh when setup is complete.
 // More reliable than grepping log files.
@@ -192,32 +187,36 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
 
     if (USE_LAUNCHABLE) {
       // ── Launchable path: pre-baked CI environment ──────────────────
-      // Uses brev start with --setup-script pointing to our CI setup script.
+      // Uses brev search cpu | brev create with --startup-script.
       // The script pre-installs Docker, Node.js, OpenShell CLI, npm deps,
       // and pre-pulls Docker images. We just need to rsync branch code and
       // run onboard.
-      console.log(`[${elapsed()}] Creating instance via launchable (brev start + setup-script)...`);
+      //
+      // brev create (v0.6.322+) accepts --startup-script as a string or
+      // @filepath — not a URL. So we download the script first.
+      console.log(
+        `[${elapsed()}] Creating instance via launchable (brev search cpu | brev create + startup-script)...`,
+      );
       console.log(`[${elapsed()}]   setup-script: ${DEFAULT_SETUP_SCRIPT_URL}`);
-      console.log(`[${elapsed()}]   repo: ${NEMOCLAW_REPO_URL}`);
-      console.log(`[${elapsed()}]   cpu: ${BREV_CPU}`);
+      console.log(`[${elapsed()}]   cpu: min ${BREV_MIN_VCPU} vCPU, ${BREV_MIN_RAM} GB RAM`);
 
-      execFileSync(
-        "brev",
-        [
-          "start",
-          NEMOCLAW_REPO_URL,
-          "--name",
-          INSTANCE_NAME,
-          "--cpu",
-          BREV_CPU,
-          "--setup-script",
-          DEFAULT_SETUP_SCRIPT_URL,
-          "--detached",
-        ],
+      // Download the setup script to a temp file
+      const setupScriptPath = "/tmp/brev-ci-setup.sh";
+      execSync(`curl -fsSL -o ${setupScriptPath} "${DEFAULT_SETUP_SCRIPT_URL}"`, {
+        encoding: "utf-8",
+        timeout: 30_000,
+      });
+      console.log(`[${elapsed()}] Setup script downloaded to ${setupScriptPath}`);
+
+      // brev search cpu | brev create: finds cheapest CPU instance matching
+      // our specs and creates it with the setup script attached.
+      execSync(
+        `brev search cpu --min-vcpu ${BREV_MIN_VCPU} --min-ram ${BREV_MIN_RAM} --sort price | ` +
+          `brev create ${INSTANCE_NAME} --startup-script @${setupScriptPath} --detached`,
         { encoding: "utf-8", timeout: 180_000, stdio: ["pipe", "inherit", "inherit"] },
       );
       instanceCreated = true;
-      console.log(`[${elapsed()}] brev start returned (instance provisioning in background)`);
+      console.log(`[${elapsed()}] brev create returned (instance provisioning in background)`);
 
       // Wait for SSH
       try {
