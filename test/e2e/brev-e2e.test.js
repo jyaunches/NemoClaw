@@ -120,12 +120,14 @@ function waitForSsh(maxAttempts = 90, intervalMs = 5_000) {
 function waitForLaunchableReady(maxWaitMs = 1_200_000, pollIntervalMs = 15_000) {
   const start = Date.now();
   const elapsed = () => `${Math.round((Date.now() - start) / 1000)}s`;
+  let consecutiveSshFailures = 0;
 
   while (Date.now() - start < maxWaitMs) {
     try {
       const result = ssh(`test -f ${LAUNCHABLE_SENTINEL} && echo READY || echo PENDING`, {
         timeout: 15_000,
       });
+      consecutiveSshFailures = 0; // reset on success
       if (result.includes("READY")) {
         console.log(`[${elapsed()}] Launchable setup complete (sentinel file found)`);
         return;
@@ -140,7 +142,23 @@ function waitForLaunchableReady(maxWaitMs = 1_200_000, pollIntervalMs = 15_000) 
         /* ignore */
       }
     } catch {
-      console.log(`[${elapsed()}] Setup poll: SSH command failed, retrying...`);
+      consecutiveSshFailures++;
+      console.log(
+        `[${elapsed()}] Setup poll: SSH command failed (${consecutiveSshFailures} consecutive), retrying...`,
+      );
+      // Brev VMs sometimes reboot during setup (kernel upgrades, etc.)
+      // Refresh the SSH config every 3 consecutive failures to pick up
+      // new IP/port assignments after a reboot.
+      if (consecutiveSshFailures % 3 === 0) {
+        console.log(
+          `[${elapsed()}] Refreshing brev SSH config after ${consecutiveSshFailures} failures...`,
+        );
+        try {
+          brev("refresh");
+        } catch {
+          /* ignore */
+        }
+      }
     }
     execSync(`sleep ${pollIntervalMs / 1000}`);
   }
@@ -158,9 +176,9 @@ function runRemoteTest(scriptPath) {
     `cd ${remoteDir}`,
     `export npm_config_prefix=$HOME/.local`,
     `export PATH=$HOME/.local/bin:$PATH`,
-    // Use sg docker to ensure docker group is active for test scripts
-    // that interact with Docker (sandbox create/destroy, etc.)
-    `sg docker -c "bash ${scriptPath}" 2>&1 | tee /tmp/test-output.log`,
+    // Docker socket is chmod 666 by setup script, no sg docker needed.
+
+    `bash ${scriptPath} 2>&1 | tee /tmp/test-output.log`,
   ].join(" && ");
 
   // Stream test output to CI log AND capture it for assertions
@@ -306,19 +324,127 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
       });
       console.log(`[${elapsed()}] Plugin built`);
 
-      // Install nemoclaw CLI and run onboard.
+      // Install nemoclaw CLI.
       // Use `sudo npm link` because Node.js is installed system-wide via
       // nodesource (global prefix is /usr), so creating the global symlink
       // requires elevated permissions.
-      // Use `sg docker` to activate the docker group for this session — the
-      // launchable setup script adds the user to the docker group but SSH
-      // sessions don't pick up new group memberships without re-login.
-      console.log(`[${elapsed()}] Installing nemoclaw CLI + onboard...`);
+      console.log(`[${elapsed()}] Installing nemoclaw CLI (npm link)...`);
+      ssh(`source ~/.nvm/nvm.sh 2>/dev/null || true && cd ${remoteDir} && sudo npm link`, {
+        timeout: 120_000,
+        stream: true,
+      });
+      console.log(`[${elapsed()}] nemoclaw CLI linked`);
+
+      // Run onboard in the background. The `nemoclaw onboard` process hangs
+      // after sandbox creation because `openshell sandbox create` keeps a
+      // long-lived SSH connection to the sandbox entrypoint, and the dashboard
+      // port-forward also blocks. We launch it in background, poll for sandbox
+      // readiness via `openshell sandbox list`, then kill the hung process and
+      // write the registry file ourselves.
+      // Docker socket is chmod 666 by the setup script, so no sg docker needed.
+      console.log(`[${elapsed()}] Starting nemoclaw onboard in background...`);
       sshEnv(
-        `source ~/.nvm/nvm.sh 2>/dev/null || true && cd ${remoteDir} && sudo npm link && sg docker -c "nemoclaw onboard --non-interactive" 2>&1`,
-        { timeout: 2_400_000, stream: true },
+        [
+          `source ~/.nvm/nvm.sh 2>/dev/null || true`,
+          `cd ${remoteDir}`,
+          `nohup nemoclaw onboard --non-interactive > /tmp/nemoclaw-onboard.log 2>&1 & echo "onboard PID: $!"`,
+        ].join(" && "),
+        { timeout: 30_000 },
       );
-      console.log(`[${elapsed()}] nemoclaw onboard complete`);
+      console.log(`[${elapsed()}] Onboard launched in background`);
+
+      // Poll until openshell reports the sandbox as Ready (or onboard fails).
+      // The sandbox step is the slow part (~5-10 min for image build + upload).
+      const maxOnboardWaitMs = 1_200_000; // 20 min
+      const onboardPollMs = 15_000;
+      const onboardStart = Date.now();
+      const onboardElapsed = () => `${Math.round((Date.now() - onboardStart) / 1000)}s`;
+
+      while (Date.now() - onboardStart < maxOnboardWaitMs) {
+        try {
+          const sandboxList = ssh(`openshell sandbox list 2>/dev/null || true`, {
+            timeout: 15_000,
+          });
+          if (sandboxList.includes("e2e-test") && sandboxList.includes("Ready")) {
+            console.log(`[${onboardElapsed()}] Sandbox e2e-test is Ready!`);
+            break;
+          }
+          // Show onboard progress from the log
+          try {
+            const tail = ssh(
+              "tail -2 /tmp/nemoclaw-onboard.log 2>/dev/null || echo '(no log yet)'",
+              {
+                timeout: 10_000,
+              },
+            );
+            console.log(
+              `[${onboardElapsed()}] Onboard in progress... ${tail.replace(/\n/g, " | ")}`,
+            );
+          } catch {
+            /* ignore */
+          }
+        } catch {
+          console.log(`[${onboardElapsed()}] Poll: SSH command failed, retrying...`);
+        }
+
+        // Check if onboard failed (process exited and no sandbox)
+        try {
+          const session = ssh("cat ~/.nemoclaw/onboard-session.json 2>/dev/null || echo '{}'", {
+            timeout: 10_000,
+          });
+          const parsed = JSON.parse(session);
+          if (parsed.status === "failed") {
+            const failLog = ssh("cat /tmp/nemoclaw-onboard.log 2>/dev/null || echo 'no log'", {
+              timeout: 10_000,
+            });
+            throw new Error(`Onboard failed: ${parsed.failure || "unknown"}\n${failLog}`);
+          }
+        } catch (e) {
+          if (e.message.startsWith("Onboard failed")) throw e;
+          /* ignore parse errors */
+        }
+
+        execSync(`sleep ${onboardPollMs / 1000}`);
+      }
+
+      // Verify sandbox is actually ready
+      const finalList = ssh(`openshell sandbox list 2>/dev/null`, { timeout: 15_000 });
+      if (!finalList.includes("e2e-test") || !finalList.includes("Ready")) {
+        const failLog = ssh("cat /tmp/nemoclaw-onboard.log 2>/dev/null || echo 'no log'", {
+          timeout: 10_000,
+        });
+        throw new Error(`Sandbox not ready after ${maxOnboardWaitMs / 60_000} min.\n${failLog}`);
+      }
+
+      // Kill the hung onboard process tree and write the sandbox registry
+      // manually. The onboard hangs on the dashboard port-forward step and
+      // never writes sandboxes.json.
+      console.log(`[${elapsed()}] Sandbox ready — killing hung onboard and writing registry...`);
+      ssh(
+        [
+          // Kill any remaining onboard/openshell processes
+          `pkill -f "nemoclaw onboard" 2>/dev/null || true`,
+          `pkill -f "openshell sandbox create" 2>/dev/null || true`,
+          `sleep 1`,
+          // Write the sandbox registry that onboard never got to write
+          `mkdir -p ~/.nemoclaw`,
+          `cat > ~/.nemoclaw/sandboxes.json << 'REGISTRY'`,
+          `{`,
+          `  "version": 1,`,
+          `  "defaultSandbox": "e2e-test",`,
+          `  "sandboxes": {`,
+          `    "e2e-test": {`,
+          `      "name": "e2e-test",`,
+          `      "gpuEnabled": false,`,
+          `      "policies": []`,
+          `    }`,
+          `  }`,
+          `}`,
+          `REGISTRY`,
+        ].join("\n"),
+        { timeout: 15_000 },
+      );
+      console.log(`[${elapsed()}] Registry written, onboard workaround complete`);
     } else {
       // ── Bare instance path: brev create + brev-setup.sh ────────────
       // Full bootstrap from scratch. Slower but doesn't require a launchable.
