@@ -51,8 +51,8 @@ on:
         required: false
         type: boolean
         default: true
-      launchable_id:
-        description: "Brev launchable ID (leave empty for default CI-Ready CPU launchable)"
+      setup_script_url:
+        description: "Setup script URL for launchable (leave empty for default CI-Ready CPU script)"
         required: false
         default: ""
       keep_alive:
@@ -81,7 +81,7 @@ on:
         required: false
         type: boolean
         default: true
-      launchable_id:
+      setup_script_url:
         required: false
         type: string
         default: ""
@@ -155,7 +155,7 @@ jobs:
           INSTANCE_NAME: e2e-pr-${{ inputs.pr_number || github.run_id }}
           TEST_SUITE: ${{ inputs.test_suite }}
           USE_LAUNCHABLE: ${{ inputs.use_launchable && '1' || '0' }}
-          LAUNCHABLE_ID: ${{ inputs.launchable_id }}
+          LAUNCHABLE_SETUP_SCRIPT: ${{ inputs.setup_script_url }}
           KEEP_ALIVE: ${{ inputs.keep_alive }}
         run: npx vitest run --project e2e-brev --reporter=verbose
 

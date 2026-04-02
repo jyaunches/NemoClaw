@@ -17,11 +17,12 @@
  *   INSTANCE_NAME    — Brev instance name (e.g. pr-156-test)
  *
  * Optional env vars:
- *   TEST_SUITE       — which test to run: full (default), credential-sanitization, telegram-injection, all
- *   USE_LAUNCHABLE   — "1" (default) to use CI launchable, "0" for bare brev create + brev-setup.sh
- *   LAUNCHABLE_ID    — Brev launchable ID (default: CI-Ready CPU launchable)
- *   BREV_MIN_VCPU    — Minimum vCPUs for bare CPU instance (default: 4, only used when USE_LAUNCHABLE=0)
- *   BREV_MIN_RAM     — Minimum RAM in GB for bare CPU instance (default: 16, only used when USE_LAUNCHABLE=0)
+ *   TEST_SUITE             — which test to run: full (default), credential-sanitization, telegram-injection, all
+ *   USE_LAUNCHABLE         — "1" (default) to use CI launchable, "0" for bare brev create + brev-setup.sh
+ *   LAUNCHABLE_SETUP_SCRIPT — URL to setup script for launchable path (default: brev-launchable-ci-cpu.sh on main)
+ *   BREV_CPU               — CPU spec for launchable path (default: 4x16)
+ *   BREV_MIN_VCPU          — Minimum vCPUs for bare CPU instance (default: 4, only used when USE_LAUNCHABLE=0)
+ *   BREV_MIN_RAM           — Minimum RAM in GB for bare CPU instance (default: 16, only used when USE_LAUNCHABLE=0)
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -38,13 +39,16 @@ const TEST_SUITE = process.env.TEST_SUITE || "full";
 const REPO_DIR = path.resolve(import.meta.dirname, "../..");
 
 // Launchable configuration
-// CI-Ready CPU launchable: pre-baked Docker, Node.js, OpenShell CLI, npm deps, Docker images
-const DEFAULT_LAUNCHABLE_ID = process.env.LAUNCHABLE_ID || "env-3BoRsC1YMHNLmu82xvIike1Nh6E";
-const USE_LAUNCHABLE =
-  !["0", "false"].includes(process.env.USE_LAUNCHABLE?.toLowerCase()) &&
-  DEFAULT_LAUNCHABLE_ID !== "";
+// CI-Ready CPU setup script: pre-bakes Docker, Node.js, OpenShell CLI, npm deps, Docker images.
+// The Brev CLI uses --setup-script <URL> to run this on first boot.
+// Override via LAUNCHABLE_SETUP_SCRIPT env var (e.g. to test a branch version of the script).
+const DEFAULT_SETUP_SCRIPT_URL =
+  process.env.LAUNCHABLE_SETUP_SCRIPT ||
+  "https://raw.githubusercontent.com/NVIDIA/NemoClaw/main/scripts/brev-launchable-ci-cpu.sh";
+const BREV_CPU = process.env.BREV_CPU || "4x16";
+const USE_LAUNCHABLE = !["0", "false"].includes(process.env.USE_LAUNCHABLE?.toLowerCase());
 
-// The NemoClaw repo URL used by the launchable (it clones this during setup)
+// The NemoClaw repo URL — brev start clones this into the instance
 const NEMOCLAW_REPO_URL = "https://github.com/NVIDIA/NemoClaw.git";
 
 // Sentinel file written by brev-launchable-ci-cpu.sh when setup is complete.
@@ -188,12 +192,14 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
 
     if (USE_LAUNCHABLE) {
       // ── Launchable path: pre-baked CI environment ──────────────────
-      // The launchable runs brev-launchable-ci-cpu.sh which pre-installs
-      // Docker, Node.js, OpenShell CLI, npm deps, and pre-pulls Docker
-      // images. We just need to rsync branch code and run onboard.
-      console.log(`[${elapsed()}] Creating instance via launchable...`);
-      console.log(`[${elapsed()}]   launchable: ${DEFAULT_LAUNCHABLE_ID}`);
+      // Uses brev start with --setup-script pointing to our CI setup script.
+      // The script pre-installs Docker, Node.js, OpenShell CLI, npm deps,
+      // and pre-pulls Docker images. We just need to rsync branch code and
+      // run onboard.
+      console.log(`[${elapsed()}] Creating instance via launchable (brev start + setup-script)...`);
+      console.log(`[${elapsed()}]   setup-script: ${DEFAULT_SETUP_SCRIPT_URL}`);
       console.log(`[${elapsed()}]   repo: ${NEMOCLAW_REPO_URL}`);
+      console.log(`[${elapsed()}]   cpu: ${BREV_CPU}`);
 
       execFileSync(
         "brev",
@@ -202,8 +208,10 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
           NEMOCLAW_REPO_URL,
           "--name",
           INSTANCE_NAME,
-          "--env",
-          DEFAULT_LAUNCHABLE_ID,
+          "--cpu",
+          BREV_CPU,
+          "--setup-script",
+          DEFAULT_SETUP_SCRIPT_URL,
           "--detached",
         ],
         { encoding: "utf-8", timeout: 180_000, stdio: ["pipe", "inherit", "inherit"] },
