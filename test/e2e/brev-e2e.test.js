@@ -40,10 +40,11 @@ const REPO_DIR = path.resolve(import.meta.dirname, "../..");
 // Launchable configuration
 // CI-Ready CPU setup script: pre-bakes Docker, Node.js, OpenShell CLI, npm deps, Docker images.
 // The Brev CLI (v0.6.322+) uses `brev search cpu | brev create --startup-script @file`.
-// Override via LAUNCHABLE_SETUP_SCRIPT env var (e.g. to test a branch version of the script).
-const DEFAULT_SETUP_SCRIPT_URL =
+// Default: use the repo-local script (hermetic — always matches the checked-out branch).
+// Override via LAUNCHABLE_SETUP_SCRIPT env var to test a remote URL instead.
+const DEFAULT_SETUP_SCRIPT_PATH =
   process.env.LAUNCHABLE_SETUP_SCRIPT ||
-  "https://raw.githubusercontent.com/NVIDIA/NemoClaw/main/scripts/brev-launchable-ci-cpu.sh";
+  path.join(REPO_DIR, "scripts", "brev-launchable-ci-cpu.sh");
 const USE_LAUNCHABLE = !["0", "false"].includes(process.env.USE_LAUNCHABLE?.toLowerCase());
 
 // Sentinel file written by brev-launchable-ci-cpu.sh when setup is complete.
@@ -228,16 +229,24 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
       console.log(
         `[${elapsed()}] Creating instance via launchable (brev search cpu | brev create + startup-script)...`,
       );
-      console.log(`[${elapsed()}]   setup-script: ${DEFAULT_SETUP_SCRIPT_URL}`);
+      console.log(`[${elapsed()}]   setup-script: ${DEFAULT_SETUP_SCRIPT_PATH}`);
       console.log(`[${elapsed()}]   cpu: min ${BREV_MIN_VCPU} vCPU, ${BREV_MIN_RAM} GB RAM`);
 
-      // Download the setup script to a temp file
-      const setupScriptPath = "/tmp/brev-ci-setup.sh";
-      execSync(`curl -fsSL -o ${setupScriptPath} "${DEFAULT_SETUP_SCRIPT_URL}"`, {
-        encoding: "utf-8",
-        timeout: 30_000,
-      });
-      console.log(`[${elapsed()}] Setup script downloaded to ${setupScriptPath}`);
+      // Resolve the setup script to a local file path.
+      // Default: repo-local scripts/brev-launchable-ci-cpu.sh (hermetic).
+      // Override: set LAUNCHABLE_SETUP_SCRIPT to a URL and it gets downloaded.
+      let setupScriptPath;
+      if (DEFAULT_SETUP_SCRIPT_PATH.startsWith("http")) {
+        setupScriptPath = "/tmp/brev-ci-setup.sh";
+        execSync(`curl -fsSL -o ${setupScriptPath} "${DEFAULT_SETUP_SCRIPT_PATH}"`, {
+          encoding: "utf-8",
+          timeout: 30_000,
+        });
+        console.log(`[${elapsed()}] Setup script downloaded to ${setupScriptPath}`);
+      } else {
+        setupScriptPath = DEFAULT_SETUP_SCRIPT_PATH;
+        console.log(`[${elapsed()}] Using repo-local setup script`);
+      }
 
       // brev search cpu | brev create: finds cheapest CPU instance matching
       // our specs and creates it with the setup script attached.
@@ -309,19 +318,24 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
       console.log(`[${elapsed()}] Running npm install to sync dependencies...`);
       ssh(
         [
+          `set -o pipefail`,
           `source ~/.nvm/nvm.sh 2>/dev/null || true`,
-          `cd ${remoteDir} && npm install --ignore-scripts 2>&1 | tail -5`,
+          `cd ${remoteDir}`,
+          `npm install --ignore-scripts 2>&1 | tail -5`,
         ].join(" && "),
         { timeout: 300_000, stream: true },
       );
       console.log(`[${elapsed()}] Dependencies synced`);
 
-      // Rebuild TS plugin for our branch
+      // Rebuild TS plugin for our branch (reinstall plugin deps in case they changed)
       console.log(`[${elapsed()}] Building TypeScript plugin...`);
-      ssh(`source ~/.nvm/nvm.sh 2>/dev/null || true && cd ${remoteDir}/nemoclaw && npm run build`, {
-        timeout: 120_000,
-        stream: true,
-      });
+      ssh(
+        `source ~/.nvm/nvm.sh 2>/dev/null || true && cd ${remoteDir}/nemoclaw && npm install && npm run build`,
+        {
+          timeout: 120_000,
+          stream: true,
+        },
+      );
       console.log(`[${elapsed()}] Plugin built`);
 
       // Install nemoclaw CLI.
@@ -470,6 +484,10 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
           sandboxes: {
             "e2e-test": {
               name: "e2e-test",
+              createdAt: new Date().toISOString(),
+              model: null,
+              nimContainer: null,
+              provider: null,
               gpuEnabled: false,
               policies: [],
             },

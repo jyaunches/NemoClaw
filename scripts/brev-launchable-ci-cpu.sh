@@ -239,7 +239,7 @@ fi
 # 7. Readiness sentinel
 # ══════════════════════════════════════════════════════════════════════
 sudo touch "$SENTINEL"
-echo "=== Ready ===" >>"$LAUNCH_LOG"
+echo "=== Ready ===" | sudo tee -a "$LAUNCH_LOG" >/dev/null
 
 info "════════════════════════════════════════════════════"
 info "  CI-Ready CPU launchable setup complete"
