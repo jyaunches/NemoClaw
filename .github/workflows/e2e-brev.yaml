@@ -46,6 +46,15 @@ on:
           - credential-sanitization
           - telegram-injection
           - all
+      use_launchable:
+        description: "Use CI launchable (true) or bare brev create + brev-setup.sh (false)"
+        required: false
+        type: boolean
+        default: true
+      launchable_id:
+        description: "Brev launchable ID (leave empty for default CI-Ready CPU launchable)"
+        required: false
+        default: ""
       keep_alive:
         description: "Keep Brev instance alive after tests (for SSH debugging)"
         required: false
@@ -68,6 +77,14 @@ on:
         required: false
         type: string
         default: "full"
+      use_launchable:
+        required: false
+        type: boolean
+        default: true
+      launchable_id:
+        required: false
+        type: string
+        default: ""
       keep_alive:
         required: false
         type: boolean
@@ -89,7 +106,7 @@ concurrency:
 
 jobs:
   e2e-brev:
-    if: github.repository == 'NVIDIA/NemoClaw'
+    # if: github.repository == 'NVIDIA/NemoClaw'  # Temporarily disabled for fork testing
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -137,6 +154,8 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           INSTANCE_NAME: e2e-pr-${{ inputs.pr_number || github.run_id }}
           TEST_SUITE: ${{ inputs.test_suite }}
+          USE_LAUNCHABLE: ${{ inputs.use_launchable && '1' || '0' }}
+          LAUNCHABLE_ID: ${{ inputs.launchable_id }}
           KEEP_ALIVE: ${{ inputs.keep_alive }}
         run: npx vitest run --project e2e-brev --reporter=verbose
 
