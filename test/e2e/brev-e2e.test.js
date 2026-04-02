@@ -450,27 +450,27 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
       // never writes sandboxes.json.
       console.log(`[${elapsed()}] Sandbox ready — killing hung onboard and writing registry...`);
       ssh(
-        [
-          // Kill any remaining onboard/openshell processes
-          `pkill -f "nemoclaw onboard" 2>/dev/null || true`,
-          `pkill -f "openshell sandbox create" 2>/dev/null || true`,
-          `sleep 1`,
-          // Write the sandbox registry that onboard never got to write
-          `mkdir -p ~/.nemoclaw`,
-          `cat > ~/.nemoclaw/sandboxes.json << 'REGISTRY'`,
-          `{`,
-          `  "version": 1,`,
-          `  "defaultSandbox": "e2e-test",`,
-          `  "sandboxes": {`,
-          `    "e2e-test": {`,
-          `      "name": "e2e-test",`,
-          `      "gpuEnabled": false,`,
-          `      "policies": []`,
-          `    }`,
-          `  }`,
-          `}`,
-          `REGISTRY`,
-        ].join("\n"),
+        `pkill -f "nemoclaw onboard" 2>/dev/null || true; pkill -f "openshell sandbox create" 2>/dev/null || true; sleep 1`,
+        { timeout: 15_000 },
+      );
+      // Write the sandbox registry using printf to avoid heredoc quoting issues over SSH
+      const registryJson = JSON.stringify(
+        {
+          version: 1,
+          defaultSandbox: "e2e-test",
+          sandboxes: {
+            "e2e-test": {
+              name: "e2e-test",
+              gpuEnabled: false,
+              policies: [],
+            },
+          },
+        },
+        null,
+        2,
+      );
+      ssh(
+        `mkdir -p ~/.nemoclaw && printf '%s' '${shellEscape(registryJson)}' > ~/.nemoclaw/sandboxes.json`,
         { timeout: 15_000 },
       );
       console.log(`[${elapsed()}] Registry written, onboard workaround complete`);
