@@ -133,6 +133,10 @@ else
 fi
 sudo systemctl enable --now docker
 sudo usermod -aG docker "$TARGET_USER" 2>/dev/null || true
+# Make the socket world-accessible so SSH sessions (which don't pick up the
+# new docker group until re-login) can use Docker immediately.  This is a
+# short-lived CI VM — socket security is not a concern.
+sudo chmod 666 /var/run/docker.sock
 info "Docker enabled ($(docker --version 2>/dev/null | head -c 40))"
 
 # ══════════════════════════════════════════════════════════════════════

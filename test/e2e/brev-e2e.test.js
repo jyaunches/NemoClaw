@@ -158,7 +158,9 @@ function runRemoteTest(scriptPath) {
     `cd ${remoteDir}`,
     `export npm_config_prefix=$HOME/.local`,
     `export PATH=$HOME/.local/bin:$PATH`,
-    `bash ${scriptPath} 2>&1 | tee /tmp/test-output.log`,
+    // Use sg docker to ensure docker group is active for test scripts
+    // that interact with Docker (sandbox create/destroy, etc.)
+    `sg docker -c "bash ${scriptPath}" 2>&1 | tee /tmp/test-output.log`,
   ].join(" && ");
 
   // Stream test output to CI log AND capture it for assertions
@@ -281,12 +283,16 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
       );
       console.log(`[${elapsed()}] Code synced`);
 
-      // Re-install deps for our branch (most already cached by launchable)
-      console.log(`[${elapsed()}] Running npm ci to sync dependencies...`);
+      // Re-install deps for our branch (most already cached by launchable).
+      // Use `npm install` instead of `npm ci` because the rsync'd branch code
+      // may have a package.json/package-lock.json that are slightly out of sync
+      // (e.g. new transitive deps). npm install is more forgiving and still
+      // benefits from the launchable's pre-cached node_modules.
+      console.log(`[${elapsed()}] Running npm install to sync dependencies...`);
       ssh(
         [
           `source ~/.nvm/nvm.sh 2>/dev/null || true`,
-          `cd ${remoteDir} && npm ci --ignore-scripts 2>&1 | tail -5`,
+          `cd ${remoteDir} && npm install --ignore-scripts 2>&1 | tail -5`,
         ].join(" && "),
         { timeout: 300_000, stream: true },
       );
@@ -300,10 +306,16 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
       });
       console.log(`[${elapsed()}] Plugin built`);
 
-      // Install nemoclaw CLI and run onboard
+      // Install nemoclaw CLI and run onboard.
+      // Use `sudo npm link` because Node.js is installed system-wide via
+      // nodesource (global prefix is /usr), so creating the global symlink
+      // requires elevated permissions.
+      // Use `sg docker` to activate the docker group for this session — the
+      // launchable setup script adds the user to the docker group but SSH
+      // sessions don't pick up new group memberships without re-login.
       console.log(`[${elapsed()}] Installing nemoclaw CLI + onboard...`);
       sshEnv(
-        `source ~/.nvm/nvm.sh 2>/dev/null || true && cd ${remoteDir} && npm link && nemoclaw onboard --non-interactive 2>&1`,
+        `source ~/.nvm/nvm.sh 2>/dev/null || true && cd ${remoteDir} && sudo npm link && sg docker -c "nemoclaw onboard --non-interactive" 2>&1`,
         { timeout: 2_400_000, stream: true },
       );
       console.log(`[${elapsed()}] nemoclaw onboard complete`);
