@@ -341,16 +341,45 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
       // port-forward also blocks. We launch it in background, poll for sandbox
       // readiness via `openshell sandbox list`, then kill the hung process and
       // write the registry file ourselves.
-      // Docker socket is chmod 666 by the setup script, so no sg docker needed.
+      // Launch onboard fully detached. We chmod the docker socket so we don't
+      // need sg docker (which complicates backgrounding). nohup + </dev/null +
+      // disown ensures the SSH session can exit cleanly without waiting for
+      // the background process.
       console.log(`[${elapsed()}] Starting nemoclaw onboard in background...`);
-      sshEnv(
-        [
-          `source ~/.nvm/nvm.sh 2>/dev/null || true`,
-          `cd ${remoteDir}`,
-          `nohup nemoclaw onboard --non-interactive > /tmp/nemoclaw-onboard.log 2>&1 & echo "onboard PID: $!"`,
-        ].join(" && "),
-        { timeout: 30_000 },
-      );
+      ssh(`sudo chmod 666 /var/run/docker.sock 2>/dev/null || true`, { timeout: 10_000 });
+      // Launch onboard in background. The SSH command may exit with code 255
+      // (SSH error) because background processes keep file descriptors open.
+      // That's fine — we just need the process to start; we'll poll for
+      // sandbox readiness separately.
+      try {
+        sshEnv(
+          [
+            `source ~/.nvm/nvm.sh 2>/dev/null || true`,
+            `cd ${remoteDir}`,
+            `nohup nemoclaw onboard --non-interactive </dev/null >/tmp/nemoclaw-onboard.log 2>&1 & disown`,
+            `sleep 2`,
+            `echo "onboard launched"`,
+          ].join(" && "),
+          { timeout: 30_000 },
+        );
+      } catch (bgErr) {
+        // SSH exit 255 or ETIMEDOUT is expected when backgrounding processes.
+        // Verify the process actually started by checking the log file.
+        try {
+          const check = ssh("test -f /tmp/nemoclaw-onboard.log && echo OK || echo MISSING", {
+            timeout: 10_000,
+          });
+          if (check.includes("OK")) {
+            console.log(
+              `[${elapsed()}] Background launch returned non-zero but log file exists — continuing`,
+            );
+          } else {
+            throw bgErr;
+          }
+        } catch {
+          throw bgErr;
+        }
+      }
       console.log(`[${elapsed()}] Onboard launched in background`);
 
       // Poll until openshell reports the sandbox as Ready (or onboard fails).
