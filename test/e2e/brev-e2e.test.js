@@ -38,8 +38,8 @@ const TEST_SUITE = process.env.TEST_SUITE || "full";
 const REPO_DIR = path.resolve(import.meta.dirname, "../..");
 
 // Launchable configuration
-// TODO: Replace with actual launchable ID once Brev org billing is resolved
-const DEFAULT_LAUNCHABLE_ID = process.env.LAUNCHABLE_ID || "";
+// CI-Ready CPU launchable: pre-baked Docker, Node.js, OpenShell CLI, npm deps, Docker images
+const DEFAULT_LAUNCHABLE_ID = process.env.LAUNCHABLE_ID || "env-3BoRsC1YMHNLmu82xvIike1Nh6E";
 const USE_LAUNCHABLE =
   !["0", "false"].includes(process.env.USE_LAUNCHABLE?.toLowerCase()) &&
   DEFAULT_LAUNCHABLE_ID !== "";
