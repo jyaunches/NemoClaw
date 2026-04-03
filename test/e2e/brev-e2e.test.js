@@ -343,10 +343,13 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
       // nodesource (global prefix is /usr), so creating the global symlink
       // requires elevated permissions.
       console.log(`[${elapsed()}] Installing nemoclaw CLI (npm link)...`);
-      ssh(`source ~/.nvm/nvm.sh 2>/dev/null || true && cd ${remoteDir} && sudo npm link`, {
-        timeout: 120_000,
-        stream: true,
-      });
+      ssh(
+        `source ~/.nvm/nvm.sh 2>/dev/null || true && cd ${remoteDir} && sudo npm link && sudo chown -R $(whoami):$(whoami) ${remoteDir}`,
+        {
+          timeout: 120_000,
+          stream: true,
+        },
+      );
       console.log(`[${elapsed()}] nemoclaw CLI linked`);
 
       // Run onboard in the background. The `nemoclaw onboard` process hangs
