@@ -293,7 +293,10 @@ export function getOllamaWarmupCommand(model: string, keepAlive = "15m"): string
     stream: false,
     keep_alive: keepAlive,
   });
-  // backgrounding (nohup ... &) requires a shell wrapper
+  // backgrounding (nohup ... &) and output redirection require a shell wrapper.
+  // The payload is safe: model name is JSON-serialized (escaping all special
+  // chars) then shellQuote'd (single-quoted), so injection through model
+  // names is not feasible. This is the one intentional bash -c exception.
   return [
     "bash", "-c",
     `nohup curl -s http://localhost:${OLLAMA_PORT}/api/generate -H 'Content-Type: application/json' -d ${shellQuote(payload)} >/dev/null 2>&1 &`,

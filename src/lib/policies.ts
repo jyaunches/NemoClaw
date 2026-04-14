@@ -14,11 +14,6 @@ const registry = require("./registry");
 const { loadAgent } = require("./agent-defs");
 
 const PRESETS_DIR = path.join(ROOT, "nemoclaw-blueprint", "policies", "presets");
-function getOpenshellCommand() {
-  const binary = process.env.NEMOCLAW_OPENSHELL_BIN;
-  if (!binary) return "openshell";
-  return shellQuote(binary);
-}
 
 function listPresets() {
   if (!fs.existsSync(PRESETS_DIR)) return [];

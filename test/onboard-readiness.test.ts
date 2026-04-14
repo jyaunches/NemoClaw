@@ -83,7 +83,7 @@ describe("WSL sandbox name handling", () => {
   it("buildPolicySetCommand preserves hyphenated sandbox name", () => {
     const cmd = buildPolicySetCommand("/tmp/policy.yaml", "my-assistant");
     expect(cmd).toContain("my-assistant");
-    expect(cmd.indexOf("my-assistant")).toBe(cmd.length - 1);
+    expect(cmd[cmd.length - 1]).toBe("my-assistant");
   });
 
   it("buildPolicyGetCommand preserves hyphenated sandbox name", () => {

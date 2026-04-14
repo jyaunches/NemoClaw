@@ -179,6 +179,12 @@ function runArgv(cmd, opts = {}) {
   const exe = cmd[0];
   const args = cmd.slice(1);
   const { ignoreError, suppressOutput, env: extraEnv, stdio: stdioCfg, ...spawnOpts } = opts;
+
+  // Guard: re-enabling shell interpretation would defeat the purpose of runArgv.
+  if (spawnOpts.shell) {
+    throw new Error("runArgv: shell option is forbidden — use run() for shell commands");
+  }
+
   const stdio = stdioCfg ?? ["ignore", "pipe", "pipe"];
 
   const result = spawnSync(exe, args, {
@@ -213,6 +219,11 @@ function runArgvCapture(cmd, opts = {}) {
   const exe = cmd[0];
   const args = cmd.slice(1);
   const { ignoreError, env: extraEnv, stdio: _stdio, encoding: _encoding, ...spawnOpts } = opts;
+
+  // Guard: re-enabling shell interpretation would defeat the purpose of runArgvCapture.
+  if (spawnOpts.shell) {
+    throw new Error("runArgvCapture: shell option is forbidden — use runCapture() for shell commands");
+  }
 
   try {
     const result = spawnSync(exe, args, {

@@ -34,6 +34,12 @@ describe("runArgv", () => {
     expect(result.status).toBe(0);
   });
 
+  it("rejects shell: true to prevent security bypass", () => {
+    expect(() => runner.runArgv(["echo", "hi"], { shell: true })).toThrow(
+      /shell option is forbidden/,
+    );
+  });
+
   it("does not interpret shell metacharacters in arguments", () => {
     // If shell interpretation occurred, $(whoami) would be expanded
     const result = runner.runArgvCapture(
@@ -69,6 +75,12 @@ describe("runArgvCapture", () => {
 
   it("throws on failure without ignoreError", () => {
     expect(() => runner.runArgvCapture(["false"])).toThrow();
+  });
+
+  it("rejects shell: true to prevent security bypass", () => {
+    expect(() => runner.runArgvCapture(["echo", "hi"], { shell: true })).toThrow(
+      /shell option is forbidden/,
+    );
   });
 
   it("prevents shell injection via argument values", () => {
