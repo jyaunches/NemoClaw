@@ -164,6 +164,78 @@ function writeRedactedResult(result, stdio) {
 }
 
 /**
+ * Run a command as an argv array, bypassing the shell entirely.
+ * This eliminates shell injection risks by passing arguments directly
+ * to the child process via execve(2).
+ *
+ * @param cmd - Array where cmd[0] is the executable and cmd[1..] are arguments.
+ * @param opts - Options forwarded to spawnSync, plus ignoreError/suppressOutput.
+ */
+function runArgv(cmd, opts = {}) {
+  if (!Array.isArray(cmd) || cmd.length === 0) {
+    throw new Error(`runArgv: command must be a non-empty array, got: ${typeof cmd}`);
+  }
+
+  const exe = cmd[0];
+  const args = cmd.slice(1);
+  const { ignoreError, suppressOutput, env: extraEnv, stdio: stdioCfg, ...spawnOpts } = opts;
+  const stdio = stdioCfg ?? ["ignore", "pipe", "pipe"];
+
+  const result = spawnSync(exe, args, {
+    ...spawnOpts,
+    stdio,
+    cwd: ROOT,
+    env: { ...process.env, ...extraEnv },
+  });
+  if (!suppressOutput) {
+    writeRedactedResult(result, stdio);
+  }
+  if (result.status !== 0 && !ignoreError) {
+    const cmdStr = cmd.join(" ");
+    console.error(`  Command failed (exit ${result.status}): ${redact(cmdStr).slice(0, 80)}`);
+    process.exit(result.status || 1);
+  }
+  return result;
+}
+
+/**
+ * Run a command as an argv array and return its stdout as a trimmed string.
+ * Bypasses the shell entirely — no expansion, no injection risk.
+ *
+ * @param cmd - Array where cmd[0] is the executable and cmd[1..] are arguments.
+ * @param opts - Options forwarded to spawnSync, plus ignoreError.
+ */
+function runArgvCapture(cmd, opts = {}) {
+  if (!Array.isArray(cmd) || cmd.length === 0) {
+    throw new Error(`runArgvCapture: command must be a non-empty array, got: ${typeof cmd}`);
+  }
+
+  const exe = cmd[0];
+  const args = cmd.slice(1);
+  const { ignoreError, env: extraEnv, stdio: _stdio, encoding: _encoding, ...spawnOpts } = opts;
+
+  try {
+    const result = spawnSync(exe, args, {
+      ...spawnOpts,
+      cwd: ROOT,
+      env: { ...process.env, ...extraEnv },
+      stdio: ["pipe", "pipe", "pipe"],
+      encoding: "utf-8",
+    });
+
+    if (result.status !== 0 && !ignoreError) {
+      throw new Error(`Command failed with status ${result.status}`);
+    }
+
+    const stdout = result.stdout || "";
+    return (typeof stdout === "string" ? stdout : stdout.toString("utf-8")).trim();
+  } catch (err) {
+    if (ignoreError) return "";
+    throw redactError(err);
+  }
+}
+
+/**
  * Shell-quote a value for safe interpolation into bash -c strings.
  * Wraps in single quotes and escapes embedded single quotes.
  */
@@ -195,6 +267,8 @@ export {
   SCRIPTS,
   redact,
   run,
+  runArgv,
+  runArgvCapture,
   runCapture,
   runInteractive,
   shellQuote,

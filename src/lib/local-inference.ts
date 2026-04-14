@@ -10,7 +10,7 @@ import type { CurlProbeResult } from "./http-probe";
 import { runCurlProbe } from "./http-probe";
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { shellQuote } = require("./runner");
+const { shellQuote, runArgvCapture } = require("./runner");
 
 import { VLLM_PORT, OLLAMA_PORT } from "./ports";
 
@@ -75,9 +75,9 @@ export function getLocalProviderHealthEndpoint(provider: string): string | null 
   }
 }
 
-export function getLocalProviderHealthCheck(provider: string): string | null {
+export function getLocalProviderHealthCheck(provider: string): string[] | null {
   const endpoint = getLocalProviderHealthEndpoint(provider);
-  return endpoint ? `curl -sf ${endpoint} 2>/dev/null` : null;
+  return endpoint ? ["curl", "-sf", endpoint] : null;
 }
 
 export function getLocalProviderLabel(provider: string): string | null {
@@ -146,27 +146,41 @@ export function probeLocalProviderHealth(
   };
 }
 
-export function getLocalProviderContainerReachabilityCheck(provider: string): string | null {
+export function getLocalProviderContainerReachabilityCheck(provider: string): string[] | null {
   switch (provider) {
     case "vllm-local":
-      return `docker run --rm --add-host host.openshell.internal:host-gateway ${CONTAINER_REACHABILITY_IMAGE} -sf http://host.openshell.internal:${VLLM_PORT}/v1/models 2>/dev/null`;
+      return [
+        "docker", "run", "--rm",
+        "--add-host", "host.openshell.internal:host-gateway",
+        CONTAINER_REACHABILITY_IMAGE,
+        "-sf", `http://host.openshell.internal:${VLLM_PORT}/v1/models`,
+      ];
     case "ollama-local":
-      return `docker run --rm --add-host host.openshell.internal:host-gateway ${CONTAINER_REACHABILITY_IMAGE} -sf http://host.openshell.internal:${OLLAMA_PORT}/api/tags 2>/dev/null`;
+      return [
+        "docker", "run", "--rm",
+        "--add-host", "host.openshell.internal:host-gateway",
+        CONTAINER_REACHABILITY_IMAGE,
+        "-sf", `http://host.openshell.internal:${OLLAMA_PORT}/api/tags`,
+      ];
     default:
       return null;
   }
 }
 
+export type RunArgvCaptureFn = (cmd: string[], opts?: { ignoreError?: boolean }) => string;
+
 export function validateLocalProvider(
   provider: string,
   runCapture: RunCaptureFn,
+  runArgvCaptureImpl?: RunArgvCaptureFn,
 ): ValidationResult {
+  const argvCapture = runArgvCaptureImpl ?? runArgvCapture;
   const command = getLocalProviderHealthCheck(provider);
   if (!command) {
     return { ok: true };
   }
 
-  const output = runCapture(command, { ignoreError: true });
+  const output = argvCapture(command, { ignoreError: true });
   if (!output) {
     switch (provider) {
       case "vllm-local":
@@ -190,7 +204,7 @@ export function validateLocalProvider(
     return { ok: true };
   }
 
-  const containerOutput = runCapture(containerCommand, { ignoreError: true });
+  const containerOutput = argvCapture(containerCommand, { ignoreError: true });
   if (containerOutput) {
     return { ok: true };
   }
@@ -237,8 +251,9 @@ export function parseOllamaTags(output: unknown): string[] {
   }
 }
 
-export function getOllamaModelOptions(runCapture: RunCaptureFn): string[] {
-  const tagsOutput = runCapture(`curl -sf http://localhost:${OLLAMA_PORT}/api/tags 2>/dev/null`, {
+export function getOllamaModelOptions(runCapture: RunCaptureFn, runArgvCaptureImpl?: RunArgvCaptureFn): string[] {
+  const argvCapture = runArgvCaptureImpl ?? runArgvCapture;
+  const tagsOutput = argvCapture(["curl", "-sf", `http://localhost:${OLLAMA_PORT}/api/tags`], {
     ignoreError: true,
   });
   const tagsParsed = parseOllamaTags(tagsOutput);
@@ -246,7 +261,7 @@ export function getOllamaModelOptions(runCapture: RunCaptureFn): string[] {
     return tagsParsed;
   }
 
-  const listOutput = runCapture("ollama list 2>/dev/null", { ignoreError: true });
+  const listOutput = argvCapture(["ollama", "list"], { ignoreError: true });
   return parseOllamaList(listOutput);
 }
 
@@ -261,8 +276,9 @@ export function getBootstrapOllamaModelOptions(gpu: GpuInfo | null): string[] {
 export function getDefaultOllamaModel(
   runCapture: RunCaptureFn,
   gpu: GpuInfo | null = null,
+  runArgvCaptureImpl?: RunArgvCaptureFn,
 ): string {
-  const models = getOllamaModelOptions(runCapture);
+  const models = getOllamaModelOptions(runCapture, runArgvCaptureImpl);
   if (models.length === 0) {
     const bootstrap = getBootstrapOllamaModelOptions(gpu);
     return bootstrap[0];
@@ -270,35 +286,47 @@ export function getDefaultOllamaModel(
   return models.includes(DEFAULT_OLLAMA_MODEL) ? DEFAULT_OLLAMA_MODEL : models[0];
 }
 
-export function getOllamaWarmupCommand(model: string, keepAlive = "15m"): string {
+export function getOllamaWarmupCommand(model: string, keepAlive = "15m"): string[] {
   const payload = JSON.stringify({
     model,
     prompt: "hello",
     stream: false,
     keep_alive: keepAlive,
   });
-  return `nohup curl -s http://localhost:${OLLAMA_PORT}/api/generate -H 'Content-Type: application/json' -d ${shellQuote(payload)} >/dev/null 2>&1 &`;
+  // backgrounding (nohup ... &) requires a shell wrapper
+  return [
+    "bash", "-c",
+    `nohup curl -s http://localhost:${OLLAMA_PORT}/api/generate -H 'Content-Type: application/json' -d ${shellQuote(payload)} >/dev/null 2>&1 &`,
+  ];
 }
 
 export function getOllamaProbeCommand(
   model: string,
   timeoutSeconds = 120,
   keepAlive = "15m",
-): string {
+): string[] {
   const payload = JSON.stringify({
     model,
     prompt: "hello",
     stream: false,
     keep_alive: keepAlive,
   });
-  return `curl -sS --max-time ${timeoutSeconds} http://localhost:${OLLAMA_PORT}/api/generate -H 'Content-Type: application/json' -d ${shellQuote(payload)} 2>/dev/null`;
+  return [
+    "curl", "-sS",
+    "--max-time", String(timeoutSeconds),
+    `http://localhost:${OLLAMA_PORT}/api/generate`,
+    "-H", "Content-Type: application/json",
+    "-d", payload,
+  ];
 }
 
 export function validateOllamaModel(
   model: string,
   runCapture: RunCaptureFn,
+  runArgvCaptureImpl?: RunArgvCaptureFn,
 ): ValidationResult {
-  const output = runCapture(getOllamaProbeCommand(model), { ignoreError: true });
+  const argvCapture = runArgvCaptureImpl ?? runArgvCapture;
+  const output = argvCapture(getOllamaProbeCommand(model), { ignoreError: true });
   if (!output) {
     return {
       ok: false,

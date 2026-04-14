@@ -9,7 +9,7 @@ const path = require("path");
 const os = require("os");
 const readline = require("readline");
 const YAML = require("yaml");
-const { ROOT, run, runCapture, shellQuote } = require("./runner");
+const { ROOT, run, runArgv, runArgvCapture, runCapture, shellQuote } = require("./runner");
 const registry = require("./registry");
 const { loadAgent } = require("./agent-defs");
 
@@ -99,17 +99,19 @@ function parseCurrentPolicy(raw) {
 }
 
 /**
- * Build the openshell policy set command with properly quoted arguments.
+ * Build the openshell policy set command as an argv array.
  */
 function buildPolicySetCommand(policyFile, sandboxName) {
-  return `${getOpenshellCommand()} policy set --policy ${shellQuote(policyFile)} --wait ${shellQuote(sandboxName)}`;
+  const binary = process.env.NEMOCLAW_OPENSHELL_BIN || "openshell";
+  return [binary, "policy", "set", "--policy", policyFile, "--wait", sandboxName];
 }
 
 /**
- * Build the openshell policy get command with properly quoted arguments.
+ * Build the openshell policy get command as an argv array.
  */
 function buildPolicyGetCommand(sandboxName) {
-  return `${getOpenshellCommand()} policy get --full ${shellQuote(sandboxName)} 2>/dev/null`;
+  const binary = process.env.NEMOCLAW_OPENSHELL_BIN || "openshell";
+  return [binary, "policy", "get", "--full", sandboxName];
 }
 
 /**
@@ -245,7 +247,7 @@ function applyPreset(sandboxName, presetName, _options = {}) {
   // Get current policy YAML from sandbox
   let rawPolicy = "";
   try {
-    rawPolicy = runCapture(buildPolicyGetCommand(sandboxName), { ignoreError: true });
+    rawPolicy = runArgvCapture(buildPolicyGetCommand(sandboxName), { ignoreError: true });
   } catch {
     /* ignored */
   }
@@ -263,7 +265,7 @@ function applyPreset(sandboxName, presetName, _options = {}) {
   fs.writeFileSync(tmpFile, merged, { encoding: "utf-8", mode: 0o600 });
 
   try {
-    run(buildPolicySetCommand(tmpFile, sandboxName));
+    runArgv(buildPolicySetCommand(tmpFile, sandboxName));
 
     console.log(`  Applied preset: ${presetName}`);
   } finally {
@@ -383,7 +385,7 @@ function applyPermissivePolicy(sandboxName) {
   }
 
   console.log("  Applying permissive policy (--dangerously-skip-permissions)...");
-  run(buildPolicySetCommand(policyPath, sandboxName));
+  runArgv(buildPolicySetCommand(policyPath, sandboxName));
   console.log("  Applied permissive policy.");
 
   const sandbox = registry.getSandbox(sandboxName);

@@ -82,25 +82,25 @@ describe("sandbox readiness parsing", () => {
 describe("WSL sandbox name handling", () => {
   it("buildPolicySetCommand preserves hyphenated sandbox name", () => {
     const cmd = buildPolicySetCommand("/tmp/policy.yaml", "my-assistant");
-    expect(cmd.includes("'my-assistant'")).toBeTruthy();
-    expect(!cmd.includes(" my-assistant ")).toBeTruthy();
+    expect(cmd).toContain("my-assistant");
+    expect(cmd.indexOf("my-assistant")).toBe(cmd.length - 1);
   });
 
   it("buildPolicyGetCommand preserves hyphenated sandbox name", () => {
     const cmd = buildPolicyGetCommand("my-assistant");
-    expect(cmd.includes("'my-assistant'")).toBeTruthy();
+    expect(cmd).toContain("my-assistant");
   });
 
   it("buildPolicySetCommand preserves multi-hyphen names", () => {
     const cmd = buildPolicySetCommand("/tmp/p.yaml", "my-dev-assistant-v2");
-    expect(cmd.includes("'my-dev-assistant-v2'")).toBeTruthy();
+    expect(cmd).toContain("my-dev-assistant-v2");
   });
 
   it("buildPolicySetCommand preserves single-char name", () => {
     // If WSL truncates "my-assistant" to "m", the single-char name should
-    // still be quoted and passed through unchanged
+    // still be passed through unchanged as an argv element
     const cmd = buildPolicySetCommand("/tmp/p.yaml", "m");
-    expect(cmd.includes("'m'")).toBeTruthy();
+    expect(cmd).toContain("m");
   });
 
   it("applyPreset rejects truncated/invalid sandbox name", () => {
