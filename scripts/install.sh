@@ -309,6 +309,7 @@ usage() {
   printf "    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 Same as --yes-i-accept-third-party-software\n"
   printf "    NEMOCLAW_NON_INTERACTIVE=1    Same as --non-interactive\n"
   printf "    NEMOCLAW_SANDBOX_NAME         Sandbox name to create/use\n"
+  printf "    NEMOCLAW_SINGLE_SESSION=1     Abort if active sandbox sessions exist\n"
   printf "    NEMOCLAW_RECREATE_SANDBOX=1   Recreate an existing sandbox\n"
   printf "    NEMOCLAW_INSTALL_TAG         Git ref to install (default: latest release)\n"
   printf "    NEMOCLAW_PROVIDER             build | openai | anthropic | anthropicCompatible\n"
@@ -1244,6 +1245,23 @@ except Exception:
 
   step 3 "Onboarding"
   if command_exists nemoclaw; then
+    if [[ -f "${HOME}/.nemoclaw/sandboxes.json" ]] && node -e '
+      const fs = require("fs");
+      try {
+        const data = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+        const count = Object.keys(data.sandboxes || {}).length;
+        process.exit(count > 0 ? 0 : 1);
+      } catch {
+        process.exit(1);
+      }
+    ' "${HOME}/.nemoclaw/sandboxes.json"; then
+      warn "Existing sandbox sessions detected. Onboarding may disrupt running agents."
+      if [[ "${NEMOCLAW_SINGLE_SESSION:-}" == "1" ]]; then
+        error "Aborting — NEMOCLAW_SINGLE_SESSION is set. Destroy existing sessions with 'nemoclaw <name> destroy' before reinstalling."
+      fi
+      warn "Consider destroying existing sessions with 'nemoclaw <name> destroy' first."
+      warn "Set NEMOCLAW_SINGLE_SESSION=1 to abort the installer when sessions are active."
+    fi
     if run_installer_host_preflight; then
       run_onboard
       ONBOARD_RAN=true

@@ -1038,8 +1038,8 @@ function patchStagedDockerfile(
     );
   }
   dockerfile = dockerfile.replace(
-    /^ARG NEMOCLAW_WEB_CONFIG_B64=.*$/m,
-    `ARG NEMOCLAW_WEB_CONFIG_B64=${webSearch.buildWebSearchDockerConfig(webSearchConfig)}`,
+    /^ARG NEMOCLAW_WEB_SEARCH_ENABLED=.*$/m,
+    `ARG NEMOCLAW_WEB_SEARCH_ENABLED=${webSearchConfig ? "1" : "0"}`,
   );
   // Onboard flow expects immediate dashboard access without device pairing,
   // so disable device auth for images built during onboard (see #1217).
@@ -2705,6 +2705,12 @@ async function createSandbox(
   // end-to-end with the stricter filtering. The allowlist rejects unknown
   // env vars by default, which is safer but needs careful rollout.
   const envArgs = [formatEnvAssignment("CHAT_UI_URL", chatUiUrl)];
+  if (webSearchConfig?.fetchEnabled) {
+    const braveKey = getCredential(webSearch.BRAVE_API_KEY_ENV) || process.env[webSearch.BRAVE_API_KEY_ENV];
+    if (braveKey) {
+      envArgs.push(formatEnvAssignment(webSearch.BRAVE_API_KEY_ENV, braveKey));
+    }
+  }
   const blockedSandboxEnvNames = new Set([
     // Derived from REMOTE_PROVIDER_CONFIG to prevent drift
     ...Object.values(REMOTE_PROVIDER_CONFIG)
