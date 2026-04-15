@@ -170,10 +170,12 @@ function runArrayCapture(cmd, opts = {}) {
 
     // Check result.error first — spawnSync sets this (with status === null) when
     // the executable is missing (ENOENT), the call times out, or the spawn fails.
-    if (result.error && !ignoreError) {
+    if (result.error) {
+      if (ignoreError) return "";
       throw result.error;
     }
-    if (result.status !== 0 && !ignoreError) {
+    if (result.status !== 0) {
+      if (ignoreError) return "";
       throw new Error(`Command failed with status ${result.status}`);
     }
 

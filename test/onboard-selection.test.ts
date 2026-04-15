@@ -132,6 +132,8 @@ credentials.prompt = async (message) => {
 };
 credentials.ensureApiKey = async () => {};
 runner.runCapture = (command) => {
+  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
+  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
   const cmd = Array.isArray(command) ? command.join(" ") : command;
   if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
   if (cmd.includes("localhost:11434/api/tags")) return JSON.stringify({ models: [{ name: "nemotron-3-nano:30b" }] });
@@ -306,6 +308,8 @@ credentials.prompt = async (message) => {
 };
 credentials.ensureApiKey = async () => { process.env.NVIDIA_API_KEY = "nvapi-test"; };
 runner.runCapture = (command) => {
+  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
+  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
   const cmd = Array.isArray(command) ? command.join(" ") : command;
   if (cmd.includes("command -v ollama")) return "";
   if (cmd.includes("localhost:11434/api/tags")) return "";
@@ -400,6 +404,8 @@ credentials.prompt = async (message) => {
 };
 credentials.ensureApiKey = async () => { process.env.NVIDIA_API_KEY = "nvapi-test"; };
 runner.runCapture = (command) => {
+  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
+  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
   const cmd = Array.isArray(command) ? command.join(" ") : command;
   if (cmd.includes("command -v ollama")) return "";
   if (cmd.includes("localhost:11434/api/tags")) return "";
@@ -590,6 +596,8 @@ runner.run = (command, opts = {}) => {
   return { status: 0 };
 };
 runner.runCapture = (command) => {
+  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
+  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
   const cmd = Array.isArray(command) ? command.join(" ") : command;
   if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
   if (cmd.includes("localhost:11434/api/tags")) return JSON.stringify({ models: [{ name: "nemotron-3-nano:30b" }] });
@@ -685,6 +693,8 @@ credentials.prompt = async (message) => {
 credentials.ensureApiKey = async () => { process.env.NVIDIA_API_KEY = "nvapi-good"; };
 runner.run = () => ({ status: 0 });
 runner.runCapture = (command) => {
+  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
+  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
   const cmd = Array.isArray(command) ? command.join(" ") : command;
   if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
   if (cmd.includes("localhost:11434/api/tags")) return JSON.stringify({ models: [{ name: "nemotron-3-nano:30b" }] });
@@ -786,6 +796,8 @@ credentials.prompt = async (message) => {
   return answers.shift() || "";
 };
 runner.runCapture = (command) => {
+  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
+  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
   const cmd = Array.isArray(command) ? command.join(" ") : command;
   if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
   if (cmd.includes("localhost:11434/api/tags")) return JSON.stringify({ models: [] });
@@ -894,6 +906,8 @@ credentials.prompt = async (message) => {
   return answers.shift() || "";
 };
 runner.runCapture = (command) => {
+  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
+  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
   const cmd = Array.isArray(command) ? command.join(" ") : command;
   if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
   if (cmd.includes("localhost:11434/api/tags")) return JSON.stringify({ models: [] });
@@ -2732,6 +2746,8 @@ credentials.prompt = async (message) => {
 };
 credentials.ensureApiKey = async () => {};
 runner.runCapture = (command) => {
+  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
+  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
   const cmd = Array.isArray(command) ? command.join(" ") : command;
   if (cmd.includes("command -v ollama")) return "";
   if (cmd.includes("localhost:11434")) return "";
@@ -2842,6 +2858,8 @@ credentials.prompt = async (message) => {
 };
 credentials.ensureApiKey = async () => {};
 runner.runCapture = (command) => {
+  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
+  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
   const cmd = Array.isArray(command) ? command.join(" ") : command;
   if (cmd.includes("command -v ollama")) return "";
   if (cmd.includes("localhost:11434")) return "";
