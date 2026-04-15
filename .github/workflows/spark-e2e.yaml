@@ -1,0 +1,40 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Spark E2E — runs the nightly E2E suite on a DGX Spark self-hosted runner.
+#
+# This workflow targets the dgx-spark runner label. The runner is an ephemeral
+# Docker container managed by runner-wrapper.sh on the DGX Spark.
+#
+# Start with cloud-e2e (simplest, fastest) to validate the runner, then
+# expand to the full suite.
+
+name: spark-e2e
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: spark-e2e
+  cancel-in-progress: true
+
+jobs:
+  cloud-e2e:
+    runs-on: [self-hosted, dgx-spark]
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run cloud E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_SANDBOX_NAME: "e2e-spark"
+          NEMOCLAW_RECREATE_SANDBOX: "1"
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash test/e2e/test-full-e2e.sh
