@@ -85,6 +85,8 @@ If `NEMOCLAW_MODEL` is not set, NemoClaw selects a default model based on availa
 ## OpenAI-Compatible Server
 
 This option works with any server that implements `/v1/chat/completions`, including vLLM, TensorRT-LLM, llama.cpp, LocalAI, and others.
+If the server also supports `/v1/responses`, NemoClaw only favors that path when onboarding can verify tool-calling behavior that matches what OpenClaw actually sends.
+Otherwise NemoClaw falls back to `/v1/chat/completions`.
 
 Start your model server.
 The examples below use vLLM, but any OpenAI-compatible server works.
@@ -106,6 +108,8 @@ The wizard prompts for an API key.
 If your server does not require authentication, enter any non-empty string (for example, `dummy`).
 
 NemoClaw validates the endpoint by sending a test inference request before continuing.
+For OpenAI-compatible endpoints, the validation prefers `/responses` only when the probe produces a compatible function or tool call.
+Endpoints that return `200 OK` on `/responses` but do not format tool calls the way OpenClaw expects are configured to use `/chat/completions` instead.
 
 ### Non-Interactive Setup
 
@@ -125,6 +129,33 @@ $ NEMOCLAW_PROVIDER=custom \
 | `NEMOCLAW_ENDPOINT_URL` | Base URL of the local server. |
 | `NEMOCLAW_MODEL` | Model ID as reported by the server. |
 | `COMPATIBLE_API_KEY` | API key for the endpoint. Use any non-empty value if authentication is not required. |
+
+### Forcing Chat Completions API
+
+Some OpenAI-compatible servers (such as SGLang) expose `/v1/responses` but do
+not emit the granular streaming events that OpenClaw requires.
+NemoClaw tests streaming events during onboarding and falls back to
+`/v1/chat/completions` automatically when it detects incomplete streaming.
+
+If you need to bypass the `/v1/responses` probe entirely, set
+`NEMOCLAW_PREFERRED_API` before running onboard:
+
+```console
+$ NEMOCLAW_PREFERRED_API=openai-completions nemoclaw onboard
+```
+
+Set this variable to make the wizard skip the `/v1/responses` probe and use
+`/v1/chat/completions` directly.
+You can use it in both interactive and non-interactive mode.
+
+| Variable | Values | Default |
+|---|---|---|
+| `NEMOCLAW_PREFERRED_API` | `openai-completions`, `chat-completions` | unset (auto-detect) |
+
+If you already onboarded and the sandbox is failing at runtime, re-run
+`nemoclaw onboard` to re-probe the endpoint and bake the correct API path
+into the image.
+Refer to [Switch Inference Models](switch-inference-providers.md) for details.
 
 ## Anthropic-Compatible Server
 
@@ -200,6 +231,22 @@ $ NEMOCLAW_EXPERIMENTAL=1 \
 ```
 
 To select a specific model, set `NEMOCLAW_MODEL`.
+
+## Timeout Configuration
+
+Local inference requests use a default timeout of 180 seconds.
+Large prompts on hardware such as DGX Spark can exceed shorter timeouts, so NemoClaw sets a higher default for local providers (Ollama, vLLM, NIM).
+
+To override the timeout, set the `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` environment variable before onboarding:
+
+```console
+$ export NEMOCLAW_LOCAL_INFERENCE_TIMEOUT=300
+$ nemoclaw onboard
+```
+
+The value is in seconds.
+This setting is baked into the sandbox at build time.
+Changing it after onboarding requires re-running `nemoclaw onboard`.
 
 ## Verify the Configuration
 

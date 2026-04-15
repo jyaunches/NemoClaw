@@ -9,6 +9,7 @@ socket_exists() {
     case ":$NEMOCLAW_TEST_SOCKET_PATHS:" in
       *":$socket_path:"*) return 0 ;;
     esac
+    return 1
   fi
 
   [ -S "$socket_path" ]
@@ -56,6 +57,11 @@ detect_docker_host() {
     return 0
   fi
 
+  if socket_path="$(find_podman_socket "$home_dir")"; then
+    printf 'unix://%s\n' "$socket_path"
+    return 0
+  fi
+
   if socket_path="$(find_docker_desktop_socket "$home_dir")"; then
     printf 'unix://%s\n' "$socket_path"
     return 0
@@ -70,6 +76,9 @@ docker_host_runtime() {
   case "$docker_host" in
     unix://*"/.colima/default/docker.sock" | unix://*"/.config/colima/default/docker.sock")
       printf 'colima\n'
+      ;;
+    unix://*"/podman/machine/podman.sock" | unix://*"/podman/podman.sock")
+      printf 'podman\n'
       ;;
     unix://*"/.docker/run/docker.sock")
       printf 'docker-desktop\n'
@@ -103,11 +112,36 @@ infer_container_runtime_from_info() {
   fi
 }
 
-is_unsupported_macos_runtime() {
-  local platform="${1:-$(uname -s)}"
-  local runtime="${2:-unknown}"
+find_podman_socket() {
+  local home_dir="${1:-${HOME:-/tmp}}"
+  local socket_path
 
-  [ "$platform" = "Darwin" ] && [ "$runtime" = "podman" ]
+  if [ "$(uname -s)" = "Darwin" ]; then
+    for socket_path in \
+      "$home_dir/.local/share/containers/podman/machine/podman.sock" \
+      "/var/run/docker.sock"; do
+      if socket_exists "$socket_path"; then
+        printf '%s\n' "$socket_path"
+        return 0
+      fi
+    done
+  else
+    local uid
+    uid="$(id -u 2>/dev/null || echo 1000)"
+    # XDG_RUNTIME_DIR takes priority (user-set, may differ from /run/user/$uid)
+    local xdg_sock="${XDG_RUNTIME_DIR:-/run/user/$uid}/podman/podman.sock"
+    for socket_path in \
+      "$xdg_sock" \
+      "/run/user/$uid/podman/podman.sock" \
+      "/run/podman/podman.sock"; do
+      if socket_exists "$socket_path"; then
+        printf '%s\n' "$socket_path"
+        return 0
+      fi
+    done
+  fi
+
+  return 1
 }
 
 is_loopback_ip() {
@@ -201,12 +235,30 @@ select_openshell_cluster_container() {
   return 1
 }
 
+_validate_port() {
+  local name="$1" value="$2"
+  case "$value" in
+    '' | *[!0-9]*)
+      printf 'Invalid %s=%s (expected 1024-65535)\n' "$name" "$value" >&2
+      return 1
+      ;;
+  esac
+  [ "$value" -ge 1024 ] && [ "$value" -le 65535 ] || {
+    printf 'Invalid %s=%s (expected 1024-65535)\n' "$name" "$value" >&2
+    return 1
+  }
+}
+
 get_local_provider_base_url() {
   local provider="${1:-}"
 
+  local vllm_port="${NEMOCLAW_VLLM_PORT:-8000}"
+  local ollama_port="${NEMOCLAW_OLLAMA_PORT:-11434}"
+  _validate_port NEMOCLAW_VLLM_PORT "$vllm_port" || return 1
+  _validate_port NEMOCLAW_OLLAMA_PORT "$ollama_port" || return 1
   case "$provider" in
-    vllm-local) printf 'http://host.openshell.internal:8000/v1\n' ;;
-    ollama-local) printf 'http://host.openshell.internal:11434/v1\n' ;;
+    vllm-local) printf 'http://host.openshell.internal:%s/v1\n' "$vllm_port" ;;
+    ollama-local) printf 'http://host.openshell.internal:%s/v1\n' "$ollama_port" ;;
     *) return 1 ;;
   esac
 }
@@ -214,12 +266,16 @@ get_local_provider_base_url() {
 check_local_provider_health() {
   local provider="${1:-}"
 
+  local vllm_port="${NEMOCLAW_VLLM_PORT:-8000}"
+  local ollama_port="${NEMOCLAW_OLLAMA_PORT:-11434}"
+  _validate_port NEMOCLAW_VLLM_PORT "$vllm_port" || return 1
+  _validate_port NEMOCLAW_OLLAMA_PORT "$ollama_port" || return 1
   case "$provider" in
     vllm-local)
-      curl -sf http://localhost:8000/v1/models >/dev/null 2>&1
+      curl -sf "http://localhost:${vllm_port}/v1/models" >/dev/null 2>&1
       ;;
     ollama-local)
-      curl -sf http://localhost:11434/api/tags >/dev/null 2>&1
+      curl -sf "http://localhost:${ollama_port}/api/tags" >/dev/null 2>&1
       ;;
     *)
       return 1
