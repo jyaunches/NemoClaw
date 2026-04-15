@@ -4,7 +4,7 @@
 // NIM container management — pull, start, stop, health-check NIM images.
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { run, runCapture, runArgv, runArgvCapture } = require("./runner");
+const { run, runCapture } = require("./runner");
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const nimImages = require("../../bin/lib/nim-images.json");
 
@@ -61,7 +61,7 @@ export function canRunNimWithMemory(totalMemoryMB: number): boolean {
 export function detectGpu(): GpuDetection | null {
   // Try NVIDIA first — query VRAM
   try {
-    const output = runArgvCapture(
+    const output = runCapture(
       ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
       { ignoreError: true },
     );
@@ -87,7 +87,7 @@ export function detectGpu(): GpuDetection | null {
 
   // Fallback: unified-memory NVIDIA devices
   try {
-    const nameOutput = runArgvCapture(
+    const nameOutput = runCapture(
       ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader,nounits"],
       { ignoreError: true },
     );
@@ -101,7 +101,7 @@ export function detectGpu(): GpuDetection | null {
     if (unifiedGpuNames.length > 0) {
       let totalMemoryMB = 0;
       try {
-        const freeOut = runArgvCapture(["free", "-m"], { ignoreError: true });
+        const freeOut = runCapture(["free", "-m"], { ignoreError: true });
         if (freeOut) {
           const memLine = freeOut.split("\n").find((l: string) => l.includes("Mem:"));
           if (memLine) {
@@ -133,7 +133,7 @@ export function detectGpu(): GpuDetection | null {
   // macOS: detect Apple Silicon or discrete GPU
   if (process.platform === "darwin") {
     try {
-      const spOutput = runArgvCapture(["system_profiler", "SPDisplaysDataType"], {
+      const spOutput = runCapture(["system_profiler", "SPDisplaysDataType"], {
         ignoreError: true,
       });
       if (spOutput) {
@@ -150,7 +150,7 @@ export function detectGpu(): GpuDetection | null {
             if (vramMatch[2].toUpperCase() === "GB") memoryMB *= 1024;
           } else {
             try {
-              const memBytes = runArgvCapture(["sysctl", "-n", "hw.memsize"], { ignoreError: true });
+              const memBytes = runCapture(["sysctl", "-n", "hw.memsize"], { ignoreError: true });
               if (memBytes) memoryMB = Math.floor(parseInt(memBytes, 10) / 1024 / 1024);
             } catch {
               /* ignored */
@@ -183,7 +183,7 @@ export function pullNimImage(model: string): string {
     process.exit(1);
   }
   console.log(`  Pulling NIM image: ${image}`);
-  runArgv(["docker", "pull", image]);
+  run(["docker", "pull", image]);
   return image;
 }
 
@@ -199,10 +199,10 @@ export function startNimContainerByName(name: string, model: string, port = VLLM
     process.exit(1);
   }
 
-  runArgv(["docker", "rm", "-f", name], { ignoreError: true });
+  run(["docker", "rm", "-f", name], { ignoreError: true });
 
   console.log(`  Starting NIM container: ${name}`);
-  runArgv([
+  run([
     "docker", "run", "-d", "--gpus", "all",
     "-p", `${Number(port)}:8000`,
     "--name", name,
@@ -220,7 +220,7 @@ export function waitForNimHealth(port = VLLM_PORT, timeout = 300): boolean {
 
   while ((Date.now() - start) / 1000 < timeout) {
     try {
-      const result = runArgvCapture(["curl", "-sf", `http://localhost:${hostPort}/v1/models`], {
+      const result = runCapture(["curl", "-sf", `http://localhost:${hostPort}/v1/models`], {
         ignoreError: true,
       });
       if (result) {
@@ -244,8 +244,8 @@ export function stopNimContainer(sandboxName: string): void {
 
 export function stopNimContainerByName(name: string): void {
   console.log(`  Stopping NIM container: ${name}`);
-  runArgv(["docker", "stop", name], { ignoreError: true });
-  runArgv(["docker", "rm", name], { ignoreError: true });
+  run(["docker", "stop", name], { ignoreError: true });
+  run(["docker", "rm", name], { ignoreError: true });
 }
 
 export function nimStatus(sandboxName: string, port?: number): NimStatus {
@@ -255,7 +255,7 @@ export function nimStatus(sandboxName: string, port?: number): NimStatus {
 
 export function nimStatusByName(name: string, port?: number): NimStatus {
   try {
-    const state = runArgvCapture(
+    const state = runCapture(
       ["docker", "inspect", "--format", "{{.State.Status}}", name],
       { ignoreError: true },
     );
@@ -265,13 +265,13 @@ export function nimStatusByName(name: string, port?: number): NimStatus {
     if (state === "running") {
       let resolvedHostPort = port != null ? Number(port) : 0;
       if (!resolvedHostPort) {
-        const mapping = runArgvCapture(["docker", "port", name, "8000"], {
+        const mapping = runCapture(["docker", "port", name, "8000"], {
           ignoreError: true,
         });
         const m = mapping && mapping.match(/:(\d+)\s*$/);
         resolvedHostPort = m ? Number(m[1]) : VLLM_PORT;
       }
-      const health = runArgvCapture(
+      const health = runCapture(
         ["curl", "-sf", `http://localhost:${resolvedHostPort}/v1/models`],
         { ignoreError: true },
       );

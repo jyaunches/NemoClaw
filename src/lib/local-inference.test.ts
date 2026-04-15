@@ -86,35 +86,35 @@ describe("local inference helpers", () => {
 
   it("validates a reachable local provider", () => {
     let callCount = 0;
-    const mockArgvCapture = () => {
+    const mockCapture = () => {
       callCount += 1;
       return '{"models":[]}';
     };
-    const result = validateLocalProvider("ollama-local", () => "", mockArgvCapture);
+    const result = validateLocalProvider("ollama-local", mockCapture);
     expect(result).toEqual({ ok: true });
     expect(callCount).toBe(2);
   });
 
   it("returns a clear error when ollama-local is unavailable", () => {
-    const result = validateLocalProvider("ollama-local", () => "", () => "");
+    const result = validateLocalProvider("ollama-local", () => "");
     expect(result.ok).toBe(false);
     expect(result.message).toMatch(/http:\/\/localhost:11434/);
   });
 
   it("returns a clear error when ollama-local is not reachable from containers", () => {
     let callCount = 0;
-    const mockArgvCapture = () => {
+    const mockCapture = () => {
       callCount += 1;
       return callCount === 1 ? '{"models":[]}' : "";
     };
-    const result = validateLocalProvider("ollama-local", () => "", mockArgvCapture);
+    const result = validateLocalProvider("ollama-local", mockCapture);
     expect(result.ok).toBe(false);
     expect(result.message).toMatch(/host\.openshell\.internal:11434/);
     expect(result.message).toMatch(/0\.0\.0\.0:11434/);
   });
 
   it("returns a clear error when vllm-local is unavailable", () => {
-    const result = validateLocalProvider("vllm-local", () => "", () => "");
+    const result = validateLocalProvider("vllm-local", () => "");
     expect(result.ok).toBe(false);
     expect(result.message).toMatch(/http:\/\/localhost:8000/);
   });
@@ -163,26 +163,26 @@ describe("local inference helpers", () => {
 
   it("returns a clear error when vllm-local is not reachable from containers", () => {
     let callCount = 0;
-    const mockArgvCapture = () => {
+    const mockCapture = () => {
       callCount += 1;
       return callCount === 1 ? '{"data":[]}' : "";
     };
-    const result = validateLocalProvider("vllm-local", () => "", mockArgvCapture);
+    const result = validateLocalProvider("vllm-local", mockCapture);
     expect(result.ok).toBe(false);
     expect(result.message).toMatch(/host\.openshell\.internal:8000/);
   });
 
   it("treats unknown local providers as already valid", () => {
-    expect(validateLocalProvider("custom-provider", () => "", () => "")).toEqual({ ok: true });
+    expect(validateLocalProvider("custom-provider", () => "")).toEqual({ ok: true });
   });
 
   it("skips health check entirely for unknown providers", () => {
     let callCount = 0;
-    const mockArgvCapture = () => {
+    const mockCapture = () => {
       callCount += 1;
       return callCount <= 1 ? "ok" : "";
     };
-    const result = validateLocalProvider("custom-provider", () => "", mockArgvCapture);
+    const result = validateLocalProvider("custom-provider", mockCapture);
     // custom-provider has no health check command, so it returns ok immediately
     expect(result).toEqual({ ok: true });
   });
@@ -204,14 +204,8 @@ describe("local inference helpers", () => {
   });
 
   it("returns parsed ollama model options when available", () => {
-    const mockArgvCapture = () => "";
-    const mockArgvCaptureList = () => "nemotron-3-nano:30b  abc  24 GB  now\nqwen3:32b  def  20 GB  now";
-    expect(
-      getOllamaModelOptions(
-        () => "",
-        mockArgvCaptureList,
-      ),
-    ).toEqual(["nemotron-3-nano:30b", "qwen3:32b"]);
+    const mockCapture = () => "nemotron-3-nano:30b  abc  24 GB  now\nqwen3:32b  def  20 GB  now";
+    expect(getOllamaModelOptions(mockCapture)).toEqual(["nemotron-3-nano:30b", "qwen3:32b"]);
   });
 
   it("parses installed models from Ollama /api/tags output", () => {
@@ -234,38 +228,28 @@ describe("local inference helpers", () => {
 
   it("prefers Ollama /api/tags over parsing the CLI list output", () => {
     let call = 0;
-    const mockArgvCapture = () => {
+    const mockCapture = () => {
       call += 1;
       if (call === 1) {
         return JSON.stringify({ models: [{ name: "qwen2.5:7b" }] });
       }
       return "";
     };
-    expect(
-      getOllamaModelOptions(() => "", mockArgvCapture),
-    ).toEqual(["qwen2.5:7b"]);
+    expect(getOllamaModelOptions(mockCapture)).toEqual(["qwen2.5:7b"]);
   });
 
   it("returns no installed ollama models when list output is empty", () => {
-    expect(getOllamaModelOptions(() => "", () => "")).toEqual([]);
+    expect(getOllamaModelOptions(() => "")).toEqual([]);
   });
 
   it("prefers the default ollama model when present", () => {
-    const mockArgvCapture = () => "qwen3:32b  abc  20 GB  now\nnemotron-3-nano:30b  def  24 GB  now";
-    expect(
-      getDefaultOllamaModel(
-        () => "",
-        null,
-        mockArgvCapture,
-      ),
-    ).toBe(DEFAULT_OLLAMA_MODEL);
+    const mockCapture = () => "qwen3:32b  abc  20 GB  now\nnemotron-3-nano:30b  def  24 GB  now";
+    expect(getDefaultOllamaModel(null, mockCapture)).toBe(DEFAULT_OLLAMA_MODEL);
   });
 
   it("falls back to the first listed ollama model when the default is absent", () => {
-    const mockArgvCapture = () => "qwen3:32b  abc  20 GB  now\ngemma3:4b  def  3 GB  now";
-    expect(
-      getDefaultOllamaModel(() => "", null, mockArgvCapture),
-    ).toBe("qwen3:32b");
+    const mockCapture = () => "qwen3:32b  abc  20 GB  now\ngemma3:4b  def  3 GB  now";
+    expect(getDefaultOllamaModel(null, mockCapture)).toBe("qwen3:32b");
   });
 
   it("falls back to bootstrap model options when no Ollama models are installed", () => {
@@ -276,7 +260,7 @@ describe("local inference helpers", () => {
     expect(
       getBootstrapOllamaModelOptions({ totalMemoryMB: LARGE_OLLAMA_MIN_MEMORY_MB }),
     ).toEqual(["qwen2.5:7b", DEFAULT_OLLAMA_MODEL]);
-    expect(getDefaultOllamaModel(() => "", { totalMemoryMB: 16384 }, () => "")).toBe("qwen2.5:7b");
+    expect(getDefaultOllamaModel({ totalMemoryMB: 16384 }, () => "")).toBe("qwen2.5:7b");
   });
 
   it("builds a background warmup command for ollama models", () => {
@@ -309,13 +293,14 @@ describe("local inference helpers", () => {
   });
 
   it("fails ollama model validation when the probe times out or returns nothing", () => {
-    const result = validateOllamaModel("nemotron-3-nano:30b", () => "", () => "");
+    const result = validateOllamaModel("nemotron-3-nano:30b", () => "");
     expect(result.ok).toBe(false);
     expect(result.message).toMatch(/did not answer the local probe in time/);
   });
 
   it("fails ollama model validation when Ollama returns an error payload", () => {
-    const result = validateOllamaModel("gabegoodhart/minimax-m2.1:latest", () => "",
+    const result = validateOllamaModel(
+      "gabegoodhart/minimax-m2.1:latest",
       () => JSON.stringify({ error: "model requires more system memory" }),
     );
     expect(result.ok).toBe(false);
@@ -323,13 +308,14 @@ describe("local inference helpers", () => {
   });
 
   it("passes ollama model validation when the probe returns a normal payload", () => {
-    const result = validateOllamaModel("nemotron-3-nano:30b", () => "",
+    const result = validateOllamaModel(
+      "nemotron-3-nano:30b",
       () => JSON.stringify({ model: "nemotron-3-nano:30b", response: "hello", done: true }),
     );
     expect(result).toEqual({ ok: true });
   });
 
   it("treats non-JSON probe output as success once the model responds", () => {
-    expect(validateOllamaModel("nemotron-3-nano:30b", () => "", () => "ok")).toEqual({ ok: true });
+    expect(validateOllamaModel("nemotron-3-nano:30b", () => "ok")).toEqual({ ok: true });
   });
 });

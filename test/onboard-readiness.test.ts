@@ -80,9 +80,10 @@ describe("sandbox readiness parsing", () => {
 // Regression tests: WSL truncates hyphenated sandbox names during shell
 // argument parsing (e.g. "my-assistant" → "m").
 describe("WSL sandbox name handling", () => {
-  it("buildPolicySetCommand preserves hyphenated sandbox name", () => {
+  it("buildPolicySetCommand preserves hyphenated sandbox name as a separate argv element", () => {
     const cmd = buildPolicySetCommand("/tmp/policy.yaml", "my-assistant");
     expect(cmd).toContain("my-assistant");
+    // The sandbox name must be a discrete argv element, not concatenated into a shell string
     expect(cmd[cmd.length - 1]).toBe("my-assistant");
   });
 

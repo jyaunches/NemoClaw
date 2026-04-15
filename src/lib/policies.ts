@@ -9,7 +9,7 @@ const path = require("path");
 const os = require("os");
 const readline = require("readline");
 const YAML = require("yaml");
-const { ROOT, run, runArgv, runArgvCapture, runCapture, shellQuote } = require("./runner");
+const { ROOT, run, runCapture } = require("./runner");
 const registry = require("./registry");
 const { loadAgent } = require("./agent-defs");
 
@@ -242,7 +242,7 @@ function applyPreset(sandboxName, presetName, _options = {}) {
   // Get current policy YAML from sandbox
   let rawPolicy = "";
   try {
-    rawPolicy = runArgvCapture(buildPolicyGetCommand(sandboxName), { ignoreError: true });
+    rawPolicy = runCapture(buildPolicyGetCommand(sandboxName), { ignoreError: true });
   } catch {
     /* ignored */
   }
@@ -260,7 +260,7 @@ function applyPreset(sandboxName, presetName, _options = {}) {
   fs.writeFileSync(tmpFile, merged, { encoding: "utf-8", mode: 0o600 });
 
   try {
-    runArgv(buildPolicySetCommand(tmpFile, sandboxName));
+    run(buildPolicySetCommand(tmpFile, sandboxName));
 
     console.log(`  Applied preset: ${presetName}`);
   } finally {
@@ -380,7 +380,7 @@ function applyPermissivePolicy(sandboxName) {
   }
 
   console.log("  Applying permissive policy (--dangerously-skip-permissions)...");
-  runArgv(buildPolicySetCommand(policyPath, sandboxName));
+  run(buildPolicySetCommand(policyPath, sandboxName));
   console.log("  Applied permissive policy.");
 
   const sandbox = registry.getSandbox(sandboxName);

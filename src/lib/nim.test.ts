@@ -16,14 +16,10 @@ function loadNimWithMockedRunner(runCapture: Mock) {
   const runner = require(RUNNER_PATH);
   const originalRun = runner.run;
   const originalRunCapture = runner.runCapture;
-  const originalRunArgv = runner.runArgv;
-  const originalRunArgvCapture = runner.runArgvCapture;
 
   delete require.cache[NIM_DIST_PATH];
   runner.run = vi.fn();
-  runner.runArgv = vi.fn();
   runner.runCapture = runCapture;
-  runner.runArgvCapture = runCapture;
   const nimModule = require(NIM_DIST_PATH);
 
   return {
@@ -32,8 +28,6 @@ function loadNimWithMockedRunner(runCapture: Mock) {
       delete require.cache[NIM_DIST_PATH];
       runner.run = originalRun;
       runner.runCapture = originalRunCapture;
-      runner.runArgv = originalRunArgv;
-      runner.runArgvCapture = originalRunArgvCapture;
     },
   };
 }
