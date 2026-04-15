@@ -67,6 +67,7 @@ const {
   planHostRemediation,
 } = require("./preflight");
 const agentOnboard = require("./agent-onboard");
+const agentDefs = require("./agent-defs");
 
 const gatewayState = require("./gateway-state");
 const validation = require("./validation");
@@ -2824,10 +2825,12 @@ async function createSandbox(
   ensureDashboardForward(sandboxName, chatUiUrl);
 
   // Register only after confirmed ready — prevents phantom entries
+  const effectiveAgent = agent || agentDefs.loadAgent("openclaw");
   registry.registerSandbox({
     name: sandboxName,
     gpuEnabled: !!gpu,
     agent: agent ? agent.name : null,
+    agentVersion: fromDockerfile ? null : (effectiveAgent.expectedVersion || null),
     dangerouslySkipPermissions: dangerouslySkipPermissions || undefined,
   });
 
@@ -4010,11 +4013,6 @@ async function _setupPolicies(sandboxName, options = {}) {
           break;
         } catch (err) {
           const message = err && err.message ? err.message : String(err);
-          if (message.includes("Unimplemented")) {
-            console.error("  OpenShell policy updates are not supported by this gateway build.");
-            console.error("  This is a known issue tracked in NemoClaw #536.");
-            throw err;
-          }
           if (!message.includes("sandbox not found") || attempt === 2) {
             throw err;
           }
@@ -4054,30 +4052,12 @@ async function _setupPolicies(sandboxName, options = {}) {
         .map((s) => s.trim())
         .filter(Boolean);
       for (const name of selected) {
-        try {
-          policies.applyPreset(sandboxName, name);
-        } catch (err) {
-          const message = err && err.message ? err.message : String(err);
-          if (message.includes("Unimplemented")) {
-            console.error("  OpenShell policy updates are not supported by this gateway build.");
-            console.error("  This is a known issue tracked in NemoClaw #536.");
-          }
-          throw err;
-        }
+        policies.applyPreset(sandboxName, name);
       }
     } else {
       // Apply suggested
       for (const name of suggestions) {
-        try {
-          policies.applyPreset(sandboxName, name);
-        } catch (err) {
-          const message = err && err.message ? err.message : String(err);
-          if (message.includes("Unimplemented")) {
-            console.error("  OpenShell policy updates are not supported by this gateway build.");
-            console.error("  This is a known issue tracked in NemoClaw #536.");
-          }
-          throw err;
-        }
+        policies.applyPreset(sandboxName, name);
       }
     }
   }
@@ -4604,11 +4584,6 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
           break;
         } catch (err) {
           const message = err && err.message ? err.message : String(err);
-          if (message.includes("Unimplemented")) {
-            console.error("  OpenShell policy updates are not supported by this gateway build.");
-            console.error("  This is a known issue tracked in NemoClaw #536.");
-            throw err;
-          }
           if (!message.includes("sandbox not found") || attempt === 2) {
             throw err;
           }
@@ -4640,6 +4615,25 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
   const accessByName = {};
   for (const p of resolvedPresets) accessByName[p.name] = p.access;
   const newlySelected = interactiveChoice.filter((name) => !applied.includes(name));
+  const deselected = applied.filter((name) => !interactiveChoice.includes(name));
+
+  for (const name of deselected) {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        if (!policies.removePreset(sandboxName, name)) {
+          throw new Error(`Failed to remove preset '${name}'.`);
+        }
+        break;
+      } catch (err) {
+        const message = err && err.message ? err.message : String(err);
+        if (!message.includes("sandbox not found") || attempt === 2) {
+          throw err;
+        }
+        sleep(2);
+      }
+    }
+  }
+
   for (const name of newlySelected) {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
@@ -4649,11 +4643,6 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
         break;
       } catch (err) {
         const message = err && err.message ? err.message : String(err);
-        if (message.includes("Unimplemented")) {
-          console.error("  OpenShell policy updates are not supported by this gateway build.");
-          console.error("  This is a known issue tracked in NemoClaw #536.");
-          throw err;
-        }
         if (!message.includes("sandbox not found") || attempt === 2) {
           throw err;
         }

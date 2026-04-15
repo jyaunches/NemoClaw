@@ -156,6 +156,23 @@ resolve_default_sandbox_name() {
   local registry_file="${HOME}/.nemoclaw/sandboxes.json"
   local sandbox_name="${NEMOCLAW_SANDBOX_NAME:-}"
 
+  # Prefer the sandbox name from the current onboard session — it reflects
+  # the sandbox just created, whereas sandboxes.json may hold a stale default
+  # from a previous gateway that no longer exists (#1839).
+  local session_file="${HOME}/.nemoclaw/onboard-session.json"
+  if [[ -z "$sandbox_name" && -f "$session_file" ]] && command_exists node; then
+    sandbox_name="$(
+      node -e '
+        const fs = require("fs");
+        try {
+          const data = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+          const name = data.sandboxName || "";
+          process.stdout.write(name);
+        } catch {}
+      ' "$session_file" 2>/dev/null || true
+    )"
+  fi
+
   if [[ -z "$sandbox_name" && -f "$registry_file" ]] && command_exists node; then
     sandbox_name="$(
       node -e '
@@ -1202,6 +1219,28 @@ main() {
   fix_npm_permissions
   install_nemoclaw
   verify_nemoclaw
+
+  # Pre-upgrade safety: back up all sandbox state before onboarding (which may
+  # upgrade OpenShell). If the upgrade destroys sandbox contents, the backups
+  # in ~/.nemoclaw/rebuild-backups/ let the user recover via `nemoclaw <name> rebuild`.
+  # Check the registry file directly to avoid shelling out to nemoclaw (which
+  # may be a stub in test environments).
+  local _reg_file="${HOME}/.nemoclaw/sandboxes.json"
+  if [ -f "$_reg_file" ] && command_exists nemoclaw && command_exists openshell; then
+    local _has_sandboxes
+    _has_sandboxes="$(python3 -c "
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+    print(len(d.get('sandboxes', {})))
+except Exception:
+    print(0)
+" "$_reg_file" 2>/dev/null || echo 0)"
+    if [ "$_has_sandboxes" -gt 0 ]; then
+      info "Backing up $_has_sandboxes sandbox(es) before upgrade…"
+      nemoclaw backup-all 2>&1 || warn "Pre-upgrade backup failed (non-fatal). Continuing."
+    fi
+  fi
 
   step 3 "Onboarding"
   if command_exists nemoclaw; then
