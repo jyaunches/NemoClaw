@@ -1879,6 +1879,40 @@ async function sandboxRebuild(sandboxName, args = [], opts = {}) {
     console.log(`  ${G}\u2713${R} State restored (${restore.restoredDirs.length} directories)`);
   }
 
+  // Step 5.5: Restore policy presets (#1952)
+  // Policy presets live in the gateway policy engine, not the sandbox filesystem.
+  // They are lost when the sandbox is destroyed and recreated. Re-apply any
+  // presets that were captured in the backup manifest.
+  const savedPresets = backup.manifest.policyPresets || [];
+  if (savedPresets.length > 0) {
+    console.log("");
+    console.log("  Restoring policy presets...");
+    log(`Policy presets to restore: [${savedPresets.join(",")}]`);
+    const restoredPresets: string[] = [];
+    const failedPresets: string[] = [];
+    for (const presetName of savedPresets) {
+      try {
+        log(`Applying preset: ${presetName}`);
+        const applied = policies.applyPreset(sandboxName, presetName);
+        if (applied) {
+          restoredPresets.push(presetName);
+        } else {
+          failedPresets.push(presetName);
+        }
+      } catch (err) {
+        log(`Failed to apply preset '${presetName}': ${err.message || err}`);
+        failedPresets.push(presetName);
+      }
+    }
+    if (restoredPresets.length > 0) {
+      console.log(`  ${G}\u2713${R} Policy presets restored: ${restoredPresets.join(", ")}`);
+    }
+    if (failedPresets.length > 0) {
+      console.error(`  ${YW}\u26a0${R} Failed to restore presets: ${failedPresets.join(", ")}`);
+      console.error(`    Re-apply manually with: nemoclaw ${sandboxName} policy-add`);
+    }
+  }
+
   // Step 6: Post-restore agent-specific migration
   const agentDef = agent
     ? require("./lib/agent-defs").loadAgent(agent.name)
