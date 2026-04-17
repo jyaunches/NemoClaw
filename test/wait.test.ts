@@ -7,9 +7,9 @@ import { sleepMs, sleepSeconds } from "../src/lib/wait.ts";
 
 describe("wait utility", () => {
   it("sleepMs blocks for approximately the requested time", () => {
-    const start = Date.now();
+    const start = performance.now();
     sleepMs(100);
-    const end = Date.now();
+    const end = performance.now();
     const duration = end - start;
 
     // Allow for some jitter, but should be at least 100ms.
@@ -19,9 +19,9 @@ describe("wait utility", () => {
   });
 
   it("sleepSeconds blocks for approximately the requested time", () => {
-    const start = Date.now();
+    const start = performance.now();
     sleepSeconds(0.1);
-    const end = Date.now();
+    const end = performance.now();
     const duration = end - start;
 
     assert.ok(duration >= 100, `duration ${duration}ms < 100ms`);
@@ -29,12 +29,12 @@ describe("wait utility", () => {
   });
 
   it("returns immediately for zero, negative, or non-finite time", () => {
-    const start = Date.now();
+    const start = performance.now();
     sleepMs(0);
     sleepMs(-50);
     sleepMs(NaN);
     sleepMs(Infinity);
-    const end = Date.now();
+    const end = performance.now();
     const duration = end - start;
     assert.ok(duration < 50, `duration ${duration}ms > 50ms`);
   });
