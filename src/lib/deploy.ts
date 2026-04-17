@@ -333,7 +333,7 @@ export async function executeDeploy(opts: DeployExecutionOptions): Promise<void>
       return fail([`  Timed out waiting for Brev instance readiness for ${name}`], error, exit);
     }
     stdoutWrite(".");
-    spawnSync("sleep", ["3"]);
+    sleepSeconds(3);
   }
 
   // ── SSH trust-on-first-use (TOFU) ──────────────────────────────
@@ -371,7 +371,7 @@ export async function executeDeploy(opts: DeployExecutionOptions): Promise<void>
       );
     }
     stdoutWrite(".");
-    spawnSync("sleep", ["3"]);
+    sleepSeconds(3);
   }
 
   const sshOpts = buildSshOpts(knownHostsFile, shellQuote);
