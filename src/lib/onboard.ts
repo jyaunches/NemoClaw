@@ -2119,7 +2119,7 @@ function installOpenshell() {
 }
 
 function sleep(seconds) {
-  require("child_process").spawnSync("sleep", [String(seconds)]);
+  sleepSeconds(seconds);
 }
 
 function destroyGateway() {

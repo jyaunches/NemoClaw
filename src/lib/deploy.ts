@@ -5,6 +5,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { sleepSeconds } from "./wait";
+
 export interface DeployCredentials {
   NVIDIA_API_KEY?: string | null;
   OPENAI_API_KEY?: string | null;

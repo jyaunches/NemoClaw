@@ -10,7 +10,7 @@
  * Uses Atomics.wait to block without pegging the CPU.
  */
 export function sleepMs(ms: number): void {
-  if (ms <= 0) return;
+  if (ms <= 0 || !Number.isFinite(ms)) return;
   const buffer = new Int32Array(new SharedArrayBuffer(4));
   Atomics.wait(buffer, 0, 0, ms);
 }
