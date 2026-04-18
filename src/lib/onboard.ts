@@ -20,14 +20,13 @@ function envInt(name, fallback) {
   const n = Number(raw);
   return Number.isFinite(n) ? Math.max(0, Math.round(n)) : fallback;
 }
-
 /** Inference timeout (seconds) for local providers (Ollama, vLLM, NIM). */
 const LOCAL_INFERENCE_TIMEOUT_SECS = envInt("NEMOCLAW_LOCAL_INFERENCE_TIMEOUT", 180);
 
 /** Strip ANSI escape sequences before printing process output to the terminal.
  *  Covers CSI (color, erase, cursor), OSC, and C1 two-byte escapes per ECMA-48. */
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
-const { ROOT, SCRIPTS, redact, run, runCapture, shellQuote } = require("./runner");
+const { ROOT, SCRIPTS, redact, run, runCapture, runFile, shellQuote, validateName } = require("./runner");
 const { stageOptimizedSandboxBuildContext } = require("./sandbox-build-context");
 const { buildSubprocessEnv } = require("./subprocess-env");
 const { DASHBOARD_PORT, GATEWAY_PORT, VLLM_PORT, OLLAMA_PORT, OLLAMA_PROXY_PORT } = require("./ports");
@@ -121,6 +120,40 @@ const RESET = USE_COLOR ? "\x1b[0m" : "";
 let OPENSHELL_BIN = null;
 const GATEWAY_NAME = "nemoclaw";
 const BACK_TO_SELECTION = "__NEMOCLAW_BACK_TO_SELECTION__";
+
+/**
+ * Probe whether the gateway Docker container is actually running.
+ * openshell CLI metadata can be stale after a manual `docker rm`, so this
+ * verifies the container is live before trusting a "healthy" reuse state.
+ *
+ * Returns "running" | "missing" | "unknown".
+ * - "running"  — container exists and State.Running is true
+ * - "missing"  — container was removed or exists but is stopped (not reusable)
+ * - "unknown"  — any other failure (daemon down, timeout, etc.)
+ *
+ * Callers should only trigger stale-metadata cleanup on "missing", not on
+ * "unknown", to avoid destroying a healthy gateway when Docker is temporarily
+ * unavailable.  See #2020.
+ */
+function verifyGatewayContainerRunning() {
+  const containerName = `openshell-cluster-${GATEWAY_NAME}`;
+  const result = run(
+    `docker inspect --type container --format '{{.State.Running}}' ${containerName}`,
+    { ignoreError: true, suppressOutput: true },
+  );
+  if (result.status === 0 && (result.stdout || "").trim() === "true") {
+    return "running";
+  }
+  // Container exists but is stopped (exit 0, Running !== "true")
+  if (result.status === 0) {
+    return "missing";
+  }
+  const stderr = (result.stderr || "").toString();
+  if (stderr.includes("No such object") || stderr.includes("No such container")) {
+    return "missing";
+  }
+  return "unknown";
+}
 const OPENCLAW_LAUNCH_AGENT_PLIST = "~/Library/LaunchAgents/ai.openclaw.gateway.plist";
 
 const BUILD_ENDPOINT_URL = "https://integrate.api.nvidia.com/v1";
@@ -1008,12 +1041,18 @@ async function promptBraveSearchApiKey() {
   }
 }
 
-async function ensureValidatedBraveSearchCredential() {
-  let apiKey = getCredential(webSearch.BRAVE_API_KEY_ENV);
-  let usingSavedKey = Boolean(apiKey);
+async function ensureValidatedBraveSearchCredential(nonInteractive = isNonInteractive()) {
+  const savedApiKey = getCredential(webSearch.BRAVE_API_KEY_ENV);
+  let apiKey = savedApiKey || normalizeCredentialValue(process.env[webSearch.BRAVE_API_KEY_ENV]);
+  let usingSavedKey = Boolean(savedApiKey);
 
   while (true) {
     if (!apiKey) {
+      if (nonInteractive) {
+        throw new Error(
+          "Brave Search requires BRAVE_API_KEY or a saved Brave Search credential in non-interactive mode.",
+        );
+      }
       apiKey = await promptBraveSearchApiKey();
       usingSavedKey = false;
     }
@@ -1031,6 +1070,13 @@ async function ensureValidatedBraveSearchCredential() {
     console.error(prefix);
     if (validation.message) {
       console.error(`  ${validation.message}`);
+    }
+
+    if (nonInteractive) {
+      throw new Error(
+        validation.message ||
+          "Brave Search API key validation failed in non-interactive mode.",
+      );
     }
 
     const action = await promptBraveSearchRecovery(validation);
@@ -1183,6 +1229,30 @@ function patchStagedDockerfile(
     /^ARG NEMOCLAW_BUILD_ID=.*$/m,
     `ARG NEMOCLAW_BUILD_ID=${buildId}`,
   );
+  // Honor NEMOCLAW_CONTEXT_WINDOW / NEMOCLAW_MAX_TOKENS / NEMOCLAW_REASONING
+  // so the user can tune model metadata without editing the Dockerfile.
+  const POSITIVE_INT_RE = /^[1-9][0-9]*$/;
+  const contextWindow = process.env.NEMOCLAW_CONTEXT_WINDOW;
+  if (contextWindow && POSITIVE_INT_RE.test(contextWindow)) {
+    dockerfile = dockerfile.replace(
+      /^ARG NEMOCLAW_CONTEXT_WINDOW=.*$/m,
+      `ARG NEMOCLAW_CONTEXT_WINDOW=${contextWindow}`,
+    );
+  }
+  const maxTokens = process.env.NEMOCLAW_MAX_TOKENS;
+  if (maxTokens && POSITIVE_INT_RE.test(maxTokens)) {
+    dockerfile = dockerfile.replace(
+      /^ARG NEMOCLAW_MAX_TOKENS=.*$/m,
+      `ARG NEMOCLAW_MAX_TOKENS=${maxTokens}`,
+    );
+  }
+  const reasoning = process.env.NEMOCLAW_REASONING;
+  if (reasoning === "true" || reasoning === "false") {
+    dockerfile = dockerfile.replace(
+      /^ARG NEMOCLAW_REASONING=.*$/m,
+      `ARG NEMOCLAW_REASONING=${reasoning}`,
+    );
+  }
   // Honor NEMOCLAW_PROXY_HOST / NEMOCLAW_PROXY_PORT exported in the host
   // shell so the sandbox-side nemoclaw-start.sh sees them via $ENV at runtime.
   // Without this, the host export is silently dropped at image build time and
@@ -2355,7 +2425,24 @@ async function preflight() {
     ignoreError: true,
   });
   const activeGatewayInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
-  const gatewayReuseState = getGatewayReuseState(gatewayStatus, gwInfo, activeGatewayInfo);
+  let gatewayReuseState = getGatewayReuseState(gatewayStatus, gwInfo, activeGatewayInfo);
+
+  // Verify the gateway container is actually running — openshell CLI metadata
+  // can be stale after a manual `docker rm`. See #2020.
+  if (gatewayReuseState === "healthy") {
+    const containerState = verifyGatewayContainerRunning();
+    if (containerState === "missing") {
+      console.log("  Gateway metadata is stale (container not running). Cleaning up...");
+      runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
+      destroyGateway();
+      registry.clearAll();
+      gatewayReuseState = "missing";
+      console.log("  ✓ Stale gateway metadata cleaned up");
+    } else if (containerState === "unknown") {
+      console.log("  Warning: could not verify gateway container state (Docker may be unavailable). Proceeding with cached health status.");
+    }
+  }
+
   if (gatewayReuseState === "stale" || gatewayReuseState === "active-unnamed") {
     console.log("  Cleaning up previous NemoClaw session...");
     runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
@@ -2781,11 +2868,10 @@ async function promptValidatedSandboxName() {
       "NEMOCLAW_SANDBOX_NAME",
       "my-assistant",
     );
-    const sandboxName = (nameAnswer || "my-assistant").trim().toLowerCase();
+    const sandboxName = (nameAnswer || "my-assistant").trim();
 
-    // Validate: RFC 1123 subdomain — lowercase alphanumeric and hyphens,
-    // must start with a letter (not a digit) to satisfy Kubernetes naming.
-    if (/^[a-z]([a-z0-9-]*[a-z0-9])?$/.test(sandboxName)) {
+    try {
+      const validatedSandboxName = validateName(sandboxName, "sandbox name");
       // Reject names that collide with global CLI commands.
       // A sandbox named 'status' makes 'nemoclaw status connect' route to
       // the global status command instead of the sandbox.
@@ -2814,10 +2900,11 @@ async function promptValidatedSandboxName() {
         }
         continue;
       }
-      return sandboxName;
+      return validatedSandboxName;
+    } catch (error) {
+      console.error(`  ${error.message}`);
     }
 
-    console.error(`  Invalid sandbox name: '${sandboxName}'`);
     if (/^[0-9]/.test(sandboxName)) {
       console.error("  Names must start with a letter, not a digit.");
     } else {
@@ -2857,7 +2944,10 @@ async function createSandbox(
 ) {
   step(6, 8, "Creating sandbox");
 
-  const sandboxName = sandboxNameOverride || (await promptValidatedSandboxName());
+  const sandboxName = validateName(
+    sandboxNameOverride ?? (await promptValidatedSandboxName()),
+    "sandbox name",
+  );
   const effectivePort = agent ? agent.forwardPort : CONTROL_UI_PORT;
   const chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${effectivePort}`;
 
@@ -3407,11 +3497,11 @@ async function createSandbox(
   // or seeing 502/503 errors during initial load.
   console.log("  Waiting for NemoClaw dashboard to become ready...");
   for (let i = 0; i < 15; i++) {
-    const readyMatch = runCapture(
-      `openshell sandbox exec ${shellQuote(sandboxName)} curl -sf http://localhost:${DASHBOARD_PORT}/ 2>/dev/null || echo "no"`,
+    const readyMatch = runCaptureOpenshell(
+      ["sandbox", "exec", sandboxName, "curl", "-sf", `http://localhost:${CONTROL_UI_PORT}/`],
       { ignoreError: true },
     );
-    if (readyMatch && !readyMatch.includes("no")) {
+    if (readyMatch) {
       console.log("  ✓ Dashboard is live");
       break;
     }
@@ -3467,10 +3557,9 @@ async function createSandbox(
   // DNS proxy — run a forwarder in the sandbox pod so the isolated
   // sandbox namespace can resolve hostnames (fixes #626).
   console.log("  Setting up sandbox DNS proxy...");
-  run(
-    `bash "${path.join(SCRIPTS, "setup-dns-proxy.sh")}" ${shellQuote(GATEWAY_NAME)} ${shellQuote(sandboxName)} 2>&1 || true`,
-    { ignoreError: true },
-  );
+  runFile("bash", [path.join(SCRIPTS, "setup-dns-proxy.sh"), GATEWAY_NAME, sandboxName], {
+    ignoreError: true,
+  });
 
   // Check that messaging providers exist in the gateway (sandbox attachment
   // cannot be verified via CLI yet — only gateway-level existence is checked).
@@ -5894,7 +5983,24 @@ async function onboard(opts = {}) {
       ignoreError: true,
     });
     const activeGatewayInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
-    const gatewayReuseState = getGatewayReuseState(gatewayStatus, gatewayInfo, activeGatewayInfo);
+    let gatewayReuseState = getGatewayReuseState(gatewayStatus, gatewayInfo, activeGatewayInfo);
+
+    // Verify the gateway container is actually running — openshell CLI metadata
+    // can be stale after a manual `docker rm`. See #2020.
+    if (gatewayReuseState === "healthy") {
+      const containerState = verifyGatewayContainerRunning();
+      if (containerState === "missing") {
+        console.log("  Gateway metadata is stale (container not running). Cleaning up...");
+        runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
+        destroyGateway();
+        registry.clearAll();
+        gatewayReuseState = "missing";
+        console.log("  ✓ Stale gateway metadata cleaned up");
+      } else if (containerState === "unknown") {
+        console.log("  Warning: could not verify gateway container state (Docker may be unavailable). Proceeding with cached health status.");
+      }
+    }
+
     const canReuseHealthyGateway = gatewayReuseState === "healthy";
     const resumeGateway =
       resume && session?.steps?.gateway?.status === "complete" && canReuseHealthyGateway;
@@ -6000,31 +6106,6 @@ async function onboard(opts = {}) {
       break;
     }
 
-    if (webSearchConfig) {
-      note("  [resume] Revalidating Brave Search configuration.");
-      const braveApiKey = await ensureValidatedBraveSearchCredential();
-      if (braveApiKey) {
-        webSearchConfig = { fetchEnabled: true };
-        onboardSession.updateSession((current) => {
-          current.webSearchConfig = webSearchConfig;
-          return current;
-        });
-        note("  [resume] Reusing Brave Search configuration.");
-      } else {
-        webSearchConfig = await configureWebSearch(null);
-        onboardSession.updateSession((current) => {
-          current.webSearchConfig = webSearchConfig;
-          return current;
-        });
-      }
-    } else {
-      webSearchConfig = await configureWebSearch(webSearchConfig);
-      onboardSession.updateSession((current) => {
-        current.webSearchConfig = webSearchConfig;
-        return current;
-      });
-    }
-
     const sandboxReuseState = getSandboxReuseState(sandboxName);
     const webSearchConfigChanged = Boolean(session?.webSearchConfig) !== Boolean(webSearchConfig);
     const resumeSandbox =
@@ -6033,6 +6114,9 @@ async function onboard(opts = {}) {
       session?.steps?.sandbox?.status === "complete" &&
       sandboxReuseState === "ready";
     if (resumeSandbox) {
+      if (webSearchConfig) {
+        note("  [resume] Reusing Brave Search configuration already baked into the sandbox.");
+      }
       skippedStepMessage("sandbox", sandboxName);
     } else {
       if (resume && session?.steps?.sandbox?.status === "complete") {
@@ -6053,6 +6137,17 @@ async function onboard(opts = {}) {
           }
         }
       }
+      let nextWebSearchConfig = webSearchConfig;
+      if (nextWebSearchConfig) {
+        note("  [resume] Revalidating Brave Search configuration for sandbox recreation.");
+        const braveApiKey = await ensureValidatedBraveSearchCredential();
+        nextWebSearchConfig = braveApiKey ? { fetchEnabled: true } : null;
+        if (nextWebSearchConfig) {
+          note("  [resume] Reusing Brave Search configuration.");
+        }
+      } else {
+        nextWebSearchConfig = await configureWebSearch(null);
+      }
       startRecordedStep("sandbox", { sandboxName, provider, model });
       selectedMessagingChannels = await setupMessagingChannels();
       onboardSession.updateSession((current) => {
@@ -6065,17 +6160,24 @@ async function onboard(opts = {}) {
         provider,
         preferredInferenceApi,
         sandboxName,
-        webSearchConfig,
+        nextWebSearchConfig,
         selectedMessagingChannels,
         fromDockerfile,
         agent,
         dangerouslySkipPermissions,
       );
+      webSearchConfig = nextWebSearchConfig;
       // Persist model and provider after the sandbox entry exists in the registry.
       // updateSandbox() silently no-ops when the entry is missing, so this must
       // run after createSandbox() / registerSandbox() — not before. Fixes #1881.
       registry.updateSandbox(sandboxName, { model, provider });
-      onboardSession.markStepComplete("sandbox", { sandboxName, provider, model, nimContainer });
+      onboardSession.markStepComplete("sandbox", {
+        sandboxName,
+        provider,
+        model,
+        nimContainer,
+        webSearchConfig,
+      });
     }
 
     if (agent) {
@@ -6176,7 +6278,9 @@ module.exports = {
   compactText,
   copyBuildContextDir,
   classifySandboxCreateFailure,
+  configureWebSearch,
   createSandbox,
+  ensureValidatedBraveSearchCredential,
   formatEnvAssignment,
   getFutureShellPathHint,
   getGatewayStartEnv,
