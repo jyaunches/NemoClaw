@@ -34,14 +34,14 @@ jobs:
       pr-info: ${{ steps.get-pr-info.outputs.pr-info }}
     steps:
       - id: get-pr-info
-        uses: nv-gha-runners/get-pr-info@main
+        uses: nv-gha-runners/get-pr-info@090577647b8ddc4e06e809e264f7881650ecdccf # main
 
   build-sandbox-images:
     runs-on: linux-amd64-cpu4
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Pull base image from GHCR (fall back to local build)
         run: |
@@ -65,14 +65,14 @@ jobs:
           docker save nemoclaw-production | gzip > /tmp/isolation-image.tar.gz
 
       - name: Upload sandbox test image
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: sandbox-test-image
           path: /tmp/sandbox-test-image.tar.gz
           retention-days: 1
 
       - name: Upload isolation image
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: isolation-image
           path: /tmp/isolation-image.tar.gz
@@ -84,10 +84,10 @@ jobs:
     needs: build-sandbox-images
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Download image artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: sandbox-test-image
           path: /tmp
@@ -104,10 +104,10 @@ jobs:
     needs: build-sandbox-images
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Download image artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: isolation-image
           path: /tmp
