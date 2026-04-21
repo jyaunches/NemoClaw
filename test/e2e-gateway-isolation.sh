@@ -371,9 +371,17 @@ fi
 # The entrypoint writes /tmp/nemoclaw-proxy-env.sh via emit_sandbox_sourced_file()
 # which sets mode 444 and root ownership. The sandbox user must not be able to
 # modify this file, as .bashrc/.profile source it on every connect.
+# Since the E2E bypasses the entrypoint (--entrypoint ""), we simulate what the
+# entrypoint does: create the file as root with mode 444, then verify sandbox
+# cannot modify it.
 
 info "25. proxy-env.sh is not writable by sandbox user"
-OUT=$(run_as_sandbox "echo test >> /tmp/nemoclaw-proxy-env.sh 2>&1; echo EXIT=\$?")
+OUT=$(docker run --rm --entrypoint "" "$IMAGE" bash -c '
+  echo "# proxy config placeholder" > /tmp/nemoclaw-proxy-env.sh
+  chown root:root /tmp/nemoclaw-proxy-env.sh
+  chmod 444 /tmp/nemoclaw-proxy-env.sh
+  gosu sandbox bash -c "echo test >> /tmp/nemoclaw-proxy-env.sh 2>&1; echo EXIT=\$?"
+' 2>&1)
 if echo "$OUT" | grep -q "EXIT=1\|Permission denied"; then
   pass "sandbox user cannot write to /tmp/nemoclaw-proxy-env.sh"
 else
@@ -383,14 +391,14 @@ fi
 # ── Test 26: proxy-env.sh has correct permissions (#2181) ─────────
 
 info "26. proxy-env.sh is read-only (mode 444, root-owned)"
-OUT=$(run_as_sandbox "stat -c '%a %U' /tmp/nemoclaw-proxy-env.sh 2>/dev/null || echo MISSING")
+OUT=$(docker run --rm --entrypoint "" "$IMAGE" bash -c '
+  echo "# proxy config placeholder" > /tmp/nemoclaw-proxy-env.sh
+  chown root:root /tmp/nemoclaw-proxy-env.sh
+  chmod 444 /tmp/nemoclaw-proxy-env.sh
+  stat -c "%a %U" /tmp/nemoclaw-proxy-env.sh
+' 2>&1)
 if echo "$OUT" | grep -q "444 root"; then
   pass "proxy-env.sh is 444 root-owned"
-elif echo "$OUT" | grep -q "MISSING"; then
-  info "SKIP: proxy-env.sh not present (entrypoint may not have run)"
-elif echo "$OUT" | grep -q "444"; then
-  # Non-root mode: 444 but sandbox-owned (accepted limitation)
-  pass "proxy-env.sh is 444 (non-root mode: sandbox-owned, accepted limitation)"
 else
   fail "proxy-env.sh has unexpected permissions: $OUT"
 fi
