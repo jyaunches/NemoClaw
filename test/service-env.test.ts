@@ -375,9 +375,14 @@ describe("service environment", () => {
         expect(envFile).toContain("PYTHON_HISTORY=/tmp/.python_history");
         expect(envFile).toContain("npm_config_prefix=/tmp/npm-global");
         // SECURITY: file must be read-only (#2181)
-        const stat = execFileSync("stat", ["-f", "%Lp", join(fakeDataDir, "proxy-env.sh")], {
-          encoding: "utf-8",
-        }).trim();
+        // Use platform-appropriate stat format: -c '%a' on Linux, -f '%Lp' on macOS
+        const proxyEnvPath = join(fakeDataDir, "proxy-env.sh");
+        let stat;
+        try {
+          stat = execFileSync("stat", ["-c", "%a", proxyEnvPath], { encoding: "utf-8" }).trim();
+        } catch {
+          stat = execFileSync("stat", ["-f", "%Lp", proxyEnvPath], { encoding: "utf-8" }).trim();
+        }
         expect(stat).toBe("444");
       } finally {
         try {
@@ -626,12 +631,12 @@ describe("service environment", () => {
           `_PROXY_URL="http://\${PROXY_HOST}:\${PROXY_PORT}"`,
           `_NO_PROXY_VAL="localhost,127.0.0.1,::1,\${PROXY_HOST}"`,
           `NODE_USE_ENV_PROXY=1`,
+          `_AXIOS_FIX_SCRIPT="${fakeFixScript}"`,
           `_TOOL_REDIRECTS=()`,
           "set +u  # array expansion safe on macOS bash",
           persistBlock
             .trimEnd()
-            .replaceAll("/tmp/nemoclaw-proxy-env.sh", `${fakeDataDir}/proxy-env.sh`)
-            .replaceAll("/opt/nemoclaw-blueprint/scripts/axios-proxy-fix.js", fakeFixScript),
+            .replaceAll("/tmp/nemoclaw-proxy-env.sh", `${fakeDataDir}/proxy-env.sh`),
         ].join("\n");
         // Create a fake fix script so the -f check passes
         writeFileSync(fakeFixScript, "// fake", { mode: 0o644 });
@@ -676,12 +681,12 @@ describe("service environment", () => {
           `_PROXY_URL="http://\${PROXY_HOST}:\${PROXY_PORT}"`,
           `_NO_PROXY_VAL="localhost,127.0.0.1,::1,\${PROXY_HOST}"`,
           // NODE_USE_ENV_PROXY intentionally NOT set
+          `_AXIOS_FIX_SCRIPT="${fakeFixScript}"`,
           `_TOOL_REDIRECTS=()`,
           "set +u  # array expansion safe on macOS bash",
           persistBlock
             .trimEnd()
-            .replaceAll("/tmp/nemoclaw-proxy-env.sh", `${fakeDataDir}/proxy-env.sh`)
-            .replaceAll("/opt/nemoclaw-blueprint/scripts/axios-proxy-fix.js", fakeFixScript),
+            .replaceAll("/tmp/nemoclaw-proxy-env.sh", `${fakeDataDir}/proxy-env.sh`),
         ].join("\n");
         writeFileSync(fakeFixScript, "// fake", { mode: 0o644 });
         writeFileSync(tmpFile, wrapper, { mode: 0o700 });
