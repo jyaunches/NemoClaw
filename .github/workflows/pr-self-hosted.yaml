@@ -78,78 +78,8 @@ jobs:
           path: /tmp/isolation-image.tar.gz
           retention-days: 1
 
-  # ── Diagnostic job: compare Docker/filesystem behavior across runners ──
-  # Runs the snapshot rollback test on BOTH self-hosted and GitHub-hosted
-  # runners in parallel, with verbose diagnostics to identify why
-  # renameSync/cpSync on symlink dirs fails on NVIDIA runners.
-  # TODO: Remove this job once root cause is identified and fixed.
-  diagnose-snapshot-rollback:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: linux-amd64-cpu4
-            label: nvidia-cpu4
-          - runner: linux-amd64-cpu8
-            label: nvidia-cpu8
-          - runner: linux-amd64-cpu16
-            label: nvidia-cpu16
-          - runner: ubuntu-latest
-            label: github-hosted
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 15
-    needs: build-sandbox-images
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-
-      - name: Download image artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: sandbox-test-image
-          path: /tmp
-
-      - name: Load image
-        run: gunzip -c /tmp/sandbox-test-image.tar.gz | docker load
-
-      - name: "Diagnostics: Host environment"
-        run: |
-          echo "=== Runner: ${{ matrix.label }} ==="
-          echo "=== Kernel ==="
-          uname -a
-          echo ""
-          echo "=== Docker info ==="
-          docker info 2>&1 | grep -E "Storage Driver|Server Version|Operating System|Kernel Version|Cgroup|Runtime"
-          echo ""
-          echo "=== Docker filesystem driver details ==="
-          docker info --format '{{json .Driver}}' 2>/dev/null
-          docker info --format '{{json .DriverStatus}}' 2>/dev/null || true
-          echo ""
-          echo "=== Host mount info ==="
-          mount | grep -E "overlay|docker|tmp" || true
-          echo ""
-          echo "=== /var/lib/docker filesystem ==="
-          df -hT /var/lib/docker 2>/dev/null || echo "Cannot stat /var/lib/docker"
-
-      - name: "Diagnostics: Container filesystem behavior"
-        run: |
-          echo "=== Runner: ${{ matrix.label }} ==="
-          docker run --rm \
-            -v "${{ github.workspace }}/test/diag-container-fs.sh:/tmp/diag-container-fs.sh:ro" \
-            nemoclaw-sandbox-test /tmp/diag-container-fs.sh
-
-      - name: "Run full E2E test suite (allow failure for diagnosis)"
-        continue-on-error: true
-        run: |
-          echo "=== Runner: ${{ matrix.label }} ==="
-          docker run --rm -v "${{ github.workspace }}/test:/opt/test" nemoclaw-sandbox-test /opt/test/e2e-test.sh
-
   test-e2e-sandbox:
-    # Use GitHub-hosted runner — snapshot rollback test fails 100% on
-    # linux-amd64-cpu4 self-hosted runners due to a Docker storage/filesystem
-    # incompatibility (renameSync on overlayfs symlink dirs). Passes reliably
-    # on ubuntu-latest. See PR #2288 for diagnosis.
-    runs-on: ubuntu-latest
+    runs-on: linux-amd64-cpu4
     timeout-minutes: 15
     needs: build-sandbox-images
     steps:
