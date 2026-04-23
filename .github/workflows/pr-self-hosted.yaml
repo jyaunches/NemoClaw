@@ -136,7 +136,7 @@ jobs:
           echo "=== Runner: ${{ matrix.label }} ==="
           docker run --rm \
             -v "${{ github.workspace }}/test/diag-container-fs.sh:/tmp/diag-container-fs.sh:ro" \
-            nemoclaw-sandbox-test bash /tmp/diag-container-fs.sh
+            nemoclaw-sandbox-test /tmp/diag-container-fs.sh
 
       - name: "Run full E2E test suite (allow failure for diagnosis)"
         continue-on-error: true
