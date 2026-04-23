@@ -282,7 +282,9 @@ describe("snapshot", () => {
         throw Object.assign(new Error("EPERM"), { code: "EPERM" });
       });
 
-      expect(() => moveSync("/eperm-src", "/eperm-dest")).toThrow("EPERM");
+      expect(() => {
+        moveSync("/eperm-src", "/eperm-dest");
+      }).toThrow("EPERM");
     });
   });
 
