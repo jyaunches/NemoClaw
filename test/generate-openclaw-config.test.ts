@@ -188,3 +188,53 @@ describe("generate-openclaw-config.py: --clear-token", () => {
     expect(cleared.models).toEqual(original.models);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════
+// Phase 2: Auto-disable device auth for non-loopback URLs
+// ═══════════════════════════════════════════════════════════════════
+describe("generate-openclaw-config.py: non-loopback auto-disable device auth", () => {
+  it("auto-disables device auth for Brev Launchable URL", () => {
+    const config = runConfigScript({
+      CHAT_UI_URL: "https://nemoclaw0-xxx.brevlab.com:18789",
+    });
+    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(true);
+  });
+
+  it("auto-disables device auth for any non-loopback URL", () => {
+    const config = runConfigScript({
+      CHAT_UI_URL: "http://my-server.local:18789",
+    });
+    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(true);
+  });
+
+  it("keeps device auth enabled for 127.0.0.1", () => {
+    const config = runConfigScript({ CHAT_UI_URL: "http://127.0.0.1:18789" });
+    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(false);
+  });
+
+  it("keeps device auth enabled for localhost", () => {
+    const config = runConfigScript({ CHAT_UI_URL: "http://localhost:18789" });
+    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(false);
+  });
+
+  it("keeps device auth enabled for IPv6 loopback", () => {
+    const config = runConfigScript({ CHAT_UI_URL: "http://[::1]:18789" });
+    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(false);
+  });
+
+  it("honors explicit env var override on loopback URL", () => {
+    const config = runConfigScript({
+      CHAT_UI_URL: "http://127.0.0.1:18789",
+      NEMOCLAW_DISABLE_DEVICE_AUTH: "1",
+    });
+    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(true);
+  });
+
+  it("URL trumps env var — cannot re-enable device auth for non-loopback", () => {
+    const config = runConfigScript({
+      CHAT_UI_URL: "https://nemoclaw0-xxx.brevlab.com:18789",
+      NEMOCLAW_DISABLE_DEVICE_AUTH: "0",
+    });
+    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(true);
+  });
+});
