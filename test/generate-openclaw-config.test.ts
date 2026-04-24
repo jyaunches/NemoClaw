@@ -34,7 +34,12 @@ const BASE_ENV: Record<string, string> = {
 let tmpDir: string;
 
 function runConfigScript(envOverrides: Record<string, string> = {}): any {
-  const env: Record<string, string> = { ...BASE_ENV, ...envOverrides, HOME: tmpDir };
+  const env: Record<string, string> = {
+    PATH: process.env.PATH || "/usr/bin:/bin",
+    ...BASE_ENV,
+    ...envOverrides,
+    HOME: tmpDir,
+  };
   const result = spawnSync("python3", [SCRIPT_PATH], {
     encoding: "utf-8",
     stdio: ["pipe", "pipe", "pipe"],
