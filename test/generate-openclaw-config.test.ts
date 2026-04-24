@@ -1,0 +1,185 @@
+// @ts-nocheck
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+//
+// Functional tests for scripts/generate-openclaw-config.py.
+// Runs the actual Python script with controlled env vars and asserts on
+// the generated openclaw.json output.
+
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
+
+const SCRIPT_PATH = path.join(import.meta.dirname, "..", "scripts", "generate-openclaw-config.py");
+
+/** Minimal env vars required for a valid config generation run. */
+const BASE_ENV: Record<string, string> = {
+  NEMOCLAW_MODEL: "test-model",
+  NEMOCLAW_PROVIDER_KEY: "test-provider",
+  NEMOCLAW_PRIMARY_MODEL_REF: "test-ref",
+  CHAT_UI_URL: "http://127.0.0.1:18789",
+  NEMOCLAW_INFERENCE_BASE_URL: "http://localhost:8080",
+  NEMOCLAW_INFERENCE_API: "openai",
+  NEMOCLAW_INFERENCE_COMPAT_B64: Buffer.from("{}").toString("base64"),
+  NEMOCLAW_PROXY_HOST: "10.200.0.1",
+  NEMOCLAW_PROXY_PORT: "3128",
+  NEMOCLAW_CONTEXT_WINDOW: "131072",
+  NEMOCLAW_MAX_TOKENS: "4096",
+  NEMOCLAW_REASONING: "false",
+  NEMOCLAW_AGENT_TIMEOUT: "600",
+};
+
+let tmpDir: string;
+
+function runConfigScript(envOverrides: Record<string, string> = {}): any {
+  const env: Record<string, string> = { ...BASE_ENV, ...envOverrides, HOME: tmpDir };
+  const result = spawnSync("python3", [SCRIPT_PATH], {
+    encoding: "utf-8",
+    stdio: ["pipe", "pipe", "pipe"],
+    env,
+    timeout: 10_000,
+  });
+
+  if (result.status !== 0) {
+    throw new Error(
+      `Script failed (exit ${result.status}):\nstdout: ${result.stdout}\nstderr: ${result.stderr}`,
+    );
+  }
+
+  const configPath = path.join(tmpDir, ".openclaw", "openclaw.json");
+  return JSON.parse(fs.readFileSync(configPath, "utf-8"));
+}
+
+function runClearToken(): void {
+  const env: Record<string, string> = { HOME: tmpDir };
+  const result = spawnSync("python3", [SCRIPT_PATH, "--clear-token"], {
+    encoding: "utf-8",
+    stdio: ["pipe", "pipe", "pipe"],
+    env,
+    timeout: 10_000,
+  });
+
+  if (result.status !== 0) {
+    throw new Error(
+      `Script --clear-token failed (exit ${result.status}):\nstdout: ${result.stdout}\nstderr: ${result.stderr}`,
+    );
+  }
+}
+
+beforeEach(() => {
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-config-test-"));
+});
+
+afterEach(() => {
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// Phase 1: Extraction — behavior-preserving tests
+// ═══════════════════════════════════════════════════════════════════
+describe("generate-openclaw-config.py: config generation", () => {
+  it("generates valid JSON with minimal env vars", () => {
+    const config = runConfigScript();
+    expect(config).toBeDefined();
+    expect(config.gateway).toBeDefined();
+    expect(config.models).toBeDefined();
+    expect(config.agents).toBeDefined();
+  });
+
+  it("sets dangerouslyDisableDeviceAuth to false for loopback URL", () => {
+    const config = runConfigScript({ CHAT_UI_URL: "http://127.0.0.1:18789" });
+    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(false);
+  });
+
+  it("sets dangerouslyDisableDeviceAuth to true when env var is '1'", () => {
+    const config = runConfigScript({ NEMOCLAW_DISABLE_DEVICE_AUTH: "1" });
+    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(true);
+  });
+
+  it("sets allowInsecureAuth to true for http scheme", () => {
+    const config = runConfigScript({ CHAT_UI_URL: "http://127.0.0.1:18789" });
+    expect(config.gateway.controlUi.allowInsecureAuth).toBe(true);
+  });
+
+  it("sets allowInsecureAuth to false for https scheme", () => {
+    const config = runConfigScript({ CHAT_UI_URL: "https://nemoclaw0-xxx.brevlab.com:18789" });
+    expect(config.gateway.controlUi.allowInsecureAuth).toBe(false);
+  });
+
+  it("includes non-loopback origin in allowedOrigins", () => {
+    const config = runConfigScript({
+      CHAT_UI_URL: "https://nemoclaw0-xxx.brevlab.com:18789",
+    });
+    expect(config.gateway.controlUi.allowedOrigins).toContain("http://127.0.0.1:18789");
+    expect(config.gateway.controlUi.allowedOrigins).toContain(
+      "https://nemoclaw0-xxx.brevlab.com:18789",
+    );
+  });
+
+  it("includes only loopback origin for loopback URL", () => {
+    const config = runConfigScript({ CHAT_UI_URL: "http://127.0.0.1:18789" });
+    expect(config.gateway.controlUi.allowedOrigins).toEqual(["http://127.0.0.1:18789"]);
+  });
+
+  it("parses messaging channels from base64", () => {
+    const channels = Buffer.from(JSON.stringify(["telegram"])).toString("base64");
+    const config = runConfigScript({ NEMOCLAW_MESSAGING_CHANNELS_B64: channels });
+    expect(config.channels).toBeDefined();
+    expect(config.channels.telegram).toBeDefined();
+  });
+
+  it("enables web search when env is '1'", () => {
+    const config = runConfigScript({ NEMOCLAW_WEB_SEARCH_ENABLED: "1" });
+    expect(config.tools?.web?.search?.enabled).toBe(true);
+  });
+
+  it("omits web search when env is not set", () => {
+    const config = runConfigScript();
+    expect(config.tools?.web).toBeUndefined();
+  });
+
+  it("propagates agent timeout", () => {
+    const config = runConfigScript({ NEMOCLAW_AGENT_TIMEOUT: "300" });
+    expect(config.agents.defaults.timeoutSeconds).toBe(300);
+  });
+
+  it("sets gateway auth token to empty string", () => {
+    const config = runConfigScript();
+    expect(config.gateway.auth.token).toBe("");
+  });
+
+  it("creates file with 0600 permissions", () => {
+    runConfigScript();
+    const configPath = path.join(tmpDir, ".openclaw", "openclaw.json");
+    const stats = fs.statSync(configPath);
+    // 0o600 = owner read/write only (octal 600 = decimal 384)
+    expect(stats.mode & 0o777).toBe(0o600);
+  });
+});
+
+describe("generate-openclaw-config.py: --clear-token", () => {
+  it("clears token while preserving other config", () => {
+    // Generate initial config
+    const original = runConfigScript();
+    expect(original.gateway.auth.token).toBe("");
+
+    // Manually set a non-empty token
+    const configPath = path.join(tmpDir, ".openclaw", "openclaw.json");
+    original.gateway.auth.token = "test-token-123";
+    fs.writeFileSync(configPath, JSON.stringify(original, null, 2));
+    fs.chmodSync(configPath, 0o600);
+
+    // Run --clear-token
+    runClearToken();
+
+    // Verify token is cleared but everything else preserved
+    const cleared = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+    expect(cleared.gateway.auth.token).toBe("");
+    expect(cleared.gateway.controlUi.allowedOrigins).toEqual(
+      original.gateway.controlUi.allowedOrigins,
+    );
+    expect(cleared.models).toEqual(original.models);
+  });
+});
