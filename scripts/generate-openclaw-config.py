@@ -142,7 +142,15 @@ def build_config(env: dict | None = None) -> dict:
     )
     origins = list(dict.fromkeys(["http://127.0.0.1:18789", chat_origin]))
 
-    disable_device_auth = env.get("NEMOCLAW_DISABLE_DEVICE_AUTH", "") == "1"
+    # Auto-disable device auth when CHAT_UI_URL is non-loopback — terminal-based
+    # pairing is impossible when the user only has web access (Brev Launchable,
+    # remote deployments). The explicit env var override still works but cannot
+    # re-enable device auth for non-loopback URLs (security default).
+    _is_remote = not is_loopback(parsed.hostname or "")
+    disable_device_auth = (
+        env.get("NEMOCLAW_DISABLE_DEVICE_AUTH", "") == "1"
+        or _is_remote
+    )
     allow_insecure = parsed.scheme == "http"
 
     providers = {

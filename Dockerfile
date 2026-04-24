@@ -213,7 +213,10 @@ ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=
 # (e.g. {"1234567890":{"requireMention":true,"users":["555"]}}).
 # Used to enable guild-channel responses for native Discord. Default: empty map.
 ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=
-# Set to "1" to force-disable device-pairing auth. Default: "0".
+# Set to "1" to force-disable device-pairing auth. Also auto-disabled when
+# CHAT_UI_URL is a non-loopback address (Brev Launchable, remote deployments)
+# since terminal-based pairing is impossible in those contexts.
+# Default: "0" (device auth enabled for local deployments — secure by default).
 ARG NEMOCLAW_DISABLE_DEVICE_AUTH=0
 # Unique per build to bust Docker cache for config materialization layers.
 # Pass --build-arg NEMOCLAW_BUILD_ID=$(date +%s) to bust the cache.

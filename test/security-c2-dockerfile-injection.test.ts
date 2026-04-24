@@ -284,15 +284,17 @@ describe("Gateway auth hardening: Dockerfile must not hardcode insecure auth def
     expect(src).not.toMatch(/'allowInsecureAuth':\s*True/);
   });
 
-  it("dangerouslyDisableDeviceAuth is derived from NEMOCLAW_DISABLE_DEVICE_AUTH env var", () => {
+  it("dangerouslyDisableDeviceAuth is derived from env var AND non-loopback URL", () => {
     // Config generation moved to external script — check the script source
     const scriptPath = path.join(import.meta.dirname, "..", "scripts", "generate-openclaw-config.py");
     const src = fs.readFileSync(scriptPath, "utf-8");
-    // The Python config generation must read the env var
+    // Env var check still present
     expect(src).toMatch(/NEMOCLAW_DISABLE_DEVICE_AUTH/);
-    // And use the derived variable in the config dict
-    expect(src).toMatch(/dangerouslyDisableDeviceAuth/);
+    // Non-loopback derivation present
+    expect(src).toMatch(/is_loopback/);
+    // Both feed into disable_device_auth
     expect(src).toMatch(/disable_device_auth/);
+    expect(src).toMatch(/dangerouslyDisableDeviceAuth/);
   });
 
   it("allowInsecureAuth is derived from URL scheme (explicit http allowlist)", () => {
