@@ -5316,7 +5316,11 @@ async function setupInference(
     const validation = validateLocalProvider(provider);
     if (!validation.ok) {
       const hostCheck = getLocalProviderHealthCheck(provider);
-      const hostResponding = hostCheck ? !!runCapture(hostCheck, { ignoreError: true }) : false;
+      // Use run() and check exit status rather than coercing runCapture() output
+      // to boolean — curl -sf can leave output even on failure in edge cases.
+      const hostResponding = hostCheck
+        ? run(hostCheck, { ignoreError: true, suppressOutput: true }).status === 0
+        : false;
 
       if (hostResponding) {
         console.warn(`  ⚠ ${validation.message}`);
@@ -5356,12 +5360,18 @@ async function setupInference(
     ]);
   } else if (provider === "ollama-local") {
     const validation = validateLocalProvider(provider);
+    let proxyReady = false;
     if (!validation.ok) {
       // The container reachability check uses Docker's --add-host host-gateway,
       // which may not work on all Docker configurations (e.g., Brev, rootless).
       // The real sandbox uses k3s CoreDNS + NodeHosts — a different path.
-      // Probe the actual auth proxy endpoint before giving up.
-      if (!isWsl() && isProxyHealthy()) {
+      // Try to start/restart the auth proxy before probing — this recovers
+      // from stale or missing proxy processes before we decide to abort.
+      if (!isWsl()) {
+        ensureOllamaAuthProxy();
+        proxyReady = isProxyHealthy();
+      }
+      if (proxyReady) {
         console.warn(`  ⚠ ${validation.message}`);
         if (validation.diagnostic) {
           console.warn(`  Diagnostic: ${validation.diagnostic}`);
@@ -5386,7 +5396,8 @@ async function setupInference(
     const baseUrl = getLocalProviderBaseUrl(provider);
     let ollamaCredential = "ollama";
     if (!isWsl()) {
-      ensureOllamaAuthProxy();
+      // Skip if already started during the fallback recovery above.
+      if (!proxyReady) ensureOllamaAuthProxy();
       const proxyToken = getOllamaProxyToken();
       if (!proxyToken) {
         console.error(

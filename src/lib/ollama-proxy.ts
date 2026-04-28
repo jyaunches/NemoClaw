@@ -148,7 +148,6 @@ export function startOllamaAuthProxy(): boolean {
   killStaleProxy();
 
   const proxyToken = crypto.randomBytes(24).toString("hex");
-  ollamaProxyToken = proxyToken;
   // Don't persist yet — wait until provider is confirmed in setupInference.
   // If the user backs out to a different provider, the token stays in memory
   // only and is discarded.
@@ -162,6 +161,10 @@ export function startOllamaAuthProxy(): boolean {
     );
     return false;
   }
+  // Only set the in-memory token after confirming the proxy is alive.
+  // This prevents getOllamaProxyToken() from returning a stale token
+  // when the proxy failed to start.
+  ollamaProxyToken = proxyToken;
   return true;
 }
 
@@ -205,12 +208,15 @@ export function getOllamaProxyToken(): string | null {
  * is confirmed healthy on the host, onboarding can safely continue.
  */
 export function isProxyHealthy(): boolean {
-  // 1. PID check — fast rejection if process is gone
+  // 1. PID check — informational, but don't early-return on failure.
+  //    The proxy may have been restarted with a new PID that isn't in our
+  //    PID file, so the HTTP probe is the authoritative signal.
   const pid = loadPersistedProxyPid();
-  if (!isOllamaProxyProcess(pid)) return false;
+  const hasValidPid = isOllamaProxyProcess(pid);
 
-  // 2. HTTP probe — confirm the proxy actually responds, not just that
-  //    the process exists (catches wedged/stale proxy processes)
+  // 2. HTTP probe — confirm the proxy actually responds. This is the
+  //    authoritative check: a successful probe wins even if the PID file
+  //    is missing or stale (e.g., after a manual restart).
   const proxyUrl = `http://127.0.0.1:${OLLAMA_PROXY_PORT}/api/tags`;
   const token = loadPersistedProxyToken();
   const probeCmd = token
@@ -219,5 +225,10 @@ export function isProxyHealthy(): boolean {
     : ["curl", "-sf", "--connect-timeout", "3", "--max-time", "5", proxyUrl];
 
   const output = runCapture(probeCmd, { ignoreError: true });
-  return !!output;
+  if (output) return true;
+
+  // HTTP probe failed — fall back to PID as a weaker signal.
+  // This covers edge cases where the probe transiently fails but the
+  // process is confirmed alive.
+  return hasValidPid;
 }
