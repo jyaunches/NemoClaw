@@ -121,9 +121,9 @@ selectFromList(items, options)
 
 describe("policies", () => {
   describe("listPresets", () => {
-    it("returns all 12 presets", () => {
+    it("returns all 14 presets", () => {
       const presets = policies.listPresets();
-      expect(presets.length).toBe(12);
+      expect(presets.length).toBe(14);
     });
 
     it("each preset has name and description", () => {
@@ -142,6 +142,7 @@ describe("policies", () => {
         "brave",
         "brew",
         "discord",
+        "gemini",
         "github",
         "huggingface",
         "jira",
@@ -150,6 +151,7 @@ describe("policies", () => {
         "outlook",
         "pypi",
         "slack",
+        "tavily",
         "telegram",
       ];
       expect(names).toEqual(expected);

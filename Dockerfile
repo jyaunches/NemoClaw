@@ -286,6 +286,9 @@ ARG NEMOCLAW_PROXY_PORT=3128
 # The actual API key is injected at runtime via openshell:resolve:env, never
 # baked into the image.
 ARG NEMOCLAW_WEB_SEARCH_ENABLED=0
+# Web search provider: brave (default), gemini, or tavily.
+# Controls which plugin entry and credential env var are written to openclaw.json.
+ARG NEMOCLAW_WEB_SEARCH_PROVIDER=brave
 
 # SECURITY: Promote build-args to env vars so the Python script reads them
 # via os.environ, never via string interpolation into Python source code.
@@ -308,7 +311,8 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_DISABLE_DEVICE_AUTH=${NEMOCLAW_DISABLE_DEVICE_AUTH} \
     NEMOCLAW_PROXY_HOST=${NEMOCLAW_PROXY_HOST} \
     NEMOCLAW_PROXY_PORT=${NEMOCLAW_PROXY_PORT} \
-    NEMOCLAW_WEB_SEARCH_ENABLED=${NEMOCLAW_WEB_SEARCH_ENABLED}
+    NEMOCLAW_WEB_SEARCH_ENABLED=${NEMOCLAW_WEB_SEARCH_ENABLED} \
+    NEMOCLAW_WEB_SEARCH_PROVIDER=${NEMOCLAW_WEB_SEARCH_PROVIDER}
 
 WORKDIR /sandbox
 USER sandbox

@@ -12,7 +12,8 @@ import path from "node:path";
 
 import { redactSensitiveText, redactUrl } from "./redact";
 import { isErrnoException } from "./errno";
-import type { WebSearchConfig } from "./web-search";
+import { normalizePersistedWebSearchConfig } from "./web-search";
+import type { PersistedWebSearchConfig } from "./web-search";
 
 export const SESSION_VERSION = 1;
 export const SESSION_DIR = path.join(process.env.HOME || "/tmp", ".nemoclaw");
@@ -74,7 +75,7 @@ export interface Session {
   credentialEnv: string | null;
   preferredInferenceApi: string | null;
   nimContainer: string | null;
-  webSearchConfig: WebSearchConfig | null;
+  webSearchConfig: PersistedWebSearchConfig | null;
   policyPresets: string[] | null;
   messagingChannels: string[] | null;
   // SHA-256 hex digest of every legacy credential value successfully
@@ -116,7 +117,7 @@ export interface SessionUpdates {
   credentialEnv?: string;
   preferredInferenceApi?: string;
   nimContainer?: string;
-  webSearchConfig?: WebSearchConfig | null;
+  webSearchConfig?: PersistedWebSearchConfig | null;
   policyPresets?: string[];
   messagingChannels?: string[];
   migratedLegacyValueHashes?: Record<string, string>;
@@ -205,8 +206,8 @@ function readStepStatus(value: SessionJsonValue | undefined): StepStatus | null 
   return isStepStatus(value) ? value : null;
 }
 
-function parseWebSearchConfig(value: SessionJsonValue | undefined): WebSearchConfig | null {
-  return isObject(value) && value.fetchEnabled === true ? { fetchEnabled: true } : null;
+function parseWebSearchConfig(value: SessionJsonValue | undefined): PersistedWebSearchConfig | null {
+  return normalizePersistedWebSearchConfig(value);
 }
 
 function parseSessionMetadata(value: SessionJsonValue | undefined): SessionMetadata | undefined {
@@ -281,8 +282,9 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     credentialEnv: overrides.credentialEnv ?? null,
     preferredInferenceApi: overrides.preferredInferenceApi ?? null,
     nimContainer: overrides.nimContainer ?? null,
-    webSearchConfig:
-      overrides.webSearchConfig?.fetchEnabled === true ? { fetchEnabled: true } : null,
+    webSearchConfig: overrides.webSearchConfig
+      ? normalizePersistedWebSearchConfig(overrides.webSearchConfig) ?? null
+      : null,
     policyPresets: readStringArray(overrides.policyPresets),
     messagingChannels: readStringArray(overrides.messagingChannels),
     migratedLegacyValueHashes: overrides.migratedLegacyValueHashes
@@ -615,10 +617,11 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   if (typeof updates.preferredInferenceApi === "string")
     safe.preferredInferenceApi = updates.preferredInferenceApi;
   if (typeof updates.nimContainer === "string") safe.nimContainer = updates.nimContainer;
-  if (isObject(updates.webSearchConfig) && updates.webSearchConfig.fetchEnabled === true) {
-    safe.webSearchConfig = { fetchEnabled: true };
-  } else if (updates.webSearchConfig === null) {
+  if (updates.webSearchConfig === null) {
     safe.webSearchConfig = null;
+  } else if (isObject(updates.webSearchConfig)) {
+    const normalized = normalizePersistedWebSearchConfig(updates.webSearchConfig);
+    if (normalized) safe.webSearchConfig = normalized;
   }
   if (Array.isArray(updates.policyPresets)) {
     safe.policyPresets = updates.policyPresets.filter((value) => typeof value === "string");

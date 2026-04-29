@@ -30,6 +30,7 @@ Environment variables:
     NEMOCLAW_PROXY_HOST                 Egress proxy host (default: 10.200.0.1)
     NEMOCLAW_PROXY_PORT                 Egress proxy port (default: 3128)
     NEMOCLAW_WEB_SEARCH_ENABLED         Set to "1" to enable web search tools
+    NEMOCLAW_WEB_SEARCH_PROVIDER        Provider name: brave|gemini|tavily (default: brave)
 """
 
 from __future__ import annotations
@@ -295,12 +296,48 @@ def build_config(env: dict | None = None) -> dict:
     }
 
     if env.get("NEMOCLAW_WEB_SEARCH_ENABLED", "") == "1":
+        provider = env.get("NEMOCLAW_WEB_SEARCH_PROVIDER", "brave").strip().lower()
+        if provider not in ("brave", "gemini", "tavily"):
+            provider = "brave"
+
+        # Map provider to credential env var and plugin entry
+        provider_config = {
+            "brave": {
+                "credential_env": "BRAVE_API_KEY",
+                "plugin_entry": "brave",
+            },
+            "gemini": {
+                "credential_env": "GEMINI_API_KEY",
+                "plugin_entry": "google",
+            },
+            "tavily": {
+                "credential_env": "TAVILY_API_KEY",
+                "plugin_entry": "tavily",
+            },
+        }[provider]
+
+        credential_env = provider_config["credential_env"]
+        plugin_entry = provider_config["plugin_entry"]
+
+        # Build plugin config
+        web_search_plugin_config: dict = {
+            "apiKey": f"openshell:resolve:env:{credential_env}",
+        }
+        if provider == "gemini":
+            web_search_plugin_config["model"] = "gemini-2.5-flash"
+
+        config.setdefault("plugins", {}).setdefault("entries", {})[plugin_entry] = {
+            "enabled": True,
+            "config": {
+                "webSearch": web_search_plugin_config,
+            },
+        }
+
         config["tools"] = {
             "web": {
                 "search": {
                     "enabled": True,
-                    "provider": "brave",
-                    "apiKey": "openshell:resolve:env:BRAVE_API_KEY",
+                    "provider": provider,
                 },
                 "fetch": {"enabled": True},
             }

@@ -185,11 +185,11 @@ describe("onboard session", () => {
   it("persists and clears web search config through safe session updates", () => {
     session.saveSession(session.createSession());
     session.markStepComplete("provider_selection", {
-      webSearchConfig: { fetchEnabled: true },
+      webSearchConfig: { provider: "brave", fetchEnabled: true },
     });
 
     let loaded = requireLoadedSession(session.loadSession());
-    expect(loaded.webSearchConfig).toEqual({ fetchEnabled: true });
+    expect(loaded.webSearchConfig).toEqual({ provider: "brave", fetchEnabled: true });
 
     session.completeSession({ webSearchConfig: null });
     loaded = requireLoadedSession(session.loadSession());
