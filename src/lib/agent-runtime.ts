@@ -41,11 +41,15 @@ export function getSessionAgent(sandboxName?: string): AgentDefinition | null {
 
 /**
  * Get the health probe URL for the agent.
- * Returns the agent's configured probe URL, or the OpenClaw default.
+ * Returns the agent's configured probe URL, or the OpenClaw /health endpoint.
+ *
+ * Uses /health (not /) because /health returns 200 regardless of device auth
+ * state, while / returns 401 when device auth is enabled. This ensures
+ * health probes work correctly in all configurations. Fixes #2342.
  */
 export function getHealthProbeUrl(agent: AgentDefinition | null): string {
-  if (!agent) return `http://127.0.0.1:${DASHBOARD_PORT}/`;
-  return agent.healthProbe?.url || `http://127.0.0.1:${DASHBOARD_PORT}/`;
+  if (!agent) return `http://127.0.0.1:${DASHBOARD_PORT}/health`;
+  return agent.healthProbe?.url || `http://127.0.0.1:${DASHBOARD_PORT}/health`;
 }
 
 function escapeEre(value: string): string {
