@@ -294,9 +294,10 @@ function isSandboxGatewayRunning(sandboxName: string): boolean | null {
  * Cleans stale lock/temp files, sources proxy config, and launches the gateway
  * in the background. Returns true on success.
  */
-function recoverSandboxProcesses(sandboxName: string): boolean {
+function recoverSandboxProcesses(sandboxName: string, opts: { port?: number } = {}): boolean {
   const agent = agentRuntime.getSessionAgent(sandboxName);
-  const agentScript = agentRuntime.buildRecoveryScript(agent, agent?.forwardPort ?? DASHBOARD_PORT);
+  const port = opts.port ?? agent?.forwardPort ?? DASHBOARD_PORT;
+  const agentScript = agentRuntime.buildRecoveryScript(agent, port);
   const script =
     agentScript ||
     [
@@ -313,7 +314,7 @@ function recoverSandboxProcesses(sandboxName: string): boolean {
       "if [ -r /tmp/nemoclaw-proxy-env.sh ]; then . /tmp/nemoclaw-proxy-env.sh; _PE_MISSING=0; else _PE_MISSING=1; fi;",
       "[ -f ~/.bashrc ] && . ~/.bashrc;",
       'case "${NODE_OPTIONS:-}" in *nemoclaw-sandbox-safety-net*) _GUARDS_MISSING=0 ;; *) _GUARDS_MISSING=1 ;; esac;',
-      `if curl -sf --max-time 3 http://127.0.0.1:${DASHBOARD_PORT}/ > /dev/null 2>&1; then echo ALREADY_RUNNING; exit 0; fi;`,
+      `if curl -sf --max-time 3 http://127.0.0.1:${port}/ > /dev/null 2>&1; then echo ALREADY_RUNNING; exit 0; fi;`,
       "rm -rf /tmp/openclaw-*/gateway.*.lock 2>/dev/null;",
       "rm -f /tmp/gateway.log /tmp/auto-pair.log;",
       "touch /tmp/gateway.log; chmod 600 /tmp/gateway.log;",
@@ -324,7 +325,7 @@ function recoverSandboxProcesses(sandboxName: string): boolean {
       'if [ -z "$OPENCLAW" ]; then echo OPENCLAW_MISSING; exit 1; fi;',
       // Append rather than truncate so [gateway-recovery] WARNING lines
       // written above survive past the launch. (#2478)
-      `nohup "$OPENCLAW" gateway run --port ${DASHBOARD_PORT} >> /tmp/gateway.log 2>&1 &`,
+      `nohup "$OPENCLAW" gateway run --port ${port} >> /tmp/gateway.log 2>&1 &`,
       "GPID=$!; sleep 2;",
       'if kill -0 "$GPID" 2>/dev/null; then echo "GATEWAY_PID=$GPID"; else echo GATEWAY_FAILED; cat /tmp/gateway.log 2>/dev/null | tail -5; fi',
     ].join(" ");
@@ -384,7 +385,7 @@ function buildDashboardRecoverDeps(): DashboardRecoverDeps {
         try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
       }
     },
-    restartGateway: (name: string, _port: number, _agent: unknown) => recoverSandboxProcesses(name),
+    restartGateway: (name: string, port: number, _agent: unknown) => recoverSandboxProcesses(name, { port }),
     stopForward: (port: number) => {
       runOpenshell(["forward", "stop", String(port)], {
         ignoreError: true,
@@ -402,10 +403,12 @@ function buildDashboardRecoverDeps(): DashboardRecoverDeps {
 }
 
 /**
- * Detect and recover from a sandbox that survived a gateway restart but
- * whose OpenClaw processes are not running. Uses the Dashboard Delivery
- * Contract to verify and recover all links (gateway, forward, CORS).
- * Returns an object describing the outcome: { checked, wasRunning, recovered }.
+ * Detect and recover from a sandbox whose dashboard delivery chain is
+ * unhealthy. Checks all links (gateway process, port forward, CORS) and
+ * repairs whatever is broken — even when the in-sandbox gateway is alive
+ * but the forward or CORS link has drifted (e.g. after a pod restart that
+ * killed only the SSH tunnel). Returns an object describing the outcome:
+ * { checked, wasRunning, recovered }.
  */
 function checkAndRecoverSandboxProcesses(
   sandboxName: string,
@@ -415,19 +418,6 @@ function checkAndRecoverSandboxProcesses(
   if (running === null) {
     return { checked: false, wasRunning: null, recovered: false };
   }
-  if (running) {
-    return { checked: true, wasRunning: true, recovered: false };
-  }
-
-  // Gateway not running — attempt chain-level recovery
-  const _recoveryAgent = agentRuntime.getSessionAgent(sandboxName);
-  if (!quiet) {
-    console.log("");
-    console.log(
-      `  ${agentRuntime.getAgentDisplayName(_recoveryAgent)} gateway is not running inside the sandbox (sandbox likely restarted).`,
-    );
-    console.log("  Recovering...");
-  }
 
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const port = agent?.forwardPort ?? DASHBOARD_PORT;
@@ -435,13 +425,27 @@ function checkAndRecoverSandboxProcesses(
   const deps = buildDashboardRecoverDeps();
   const result = recoverDashboardChain(sandboxName, chain, deps);
 
+  // Chain was already healthy — nothing to do
+  if (!result.attempted) {
+    return { checked: true, wasRunning: running, recovered: false };
+  }
+
+  // Recovery was attempted — report progress
+  if (!quiet && !running) {
+    console.log("");
+    console.log(
+      `  ${agentRuntime.getAgentDisplayName(agent)} gateway is not running inside the sandbox (sandbox likely restarted).`,
+    );
+    console.log("  Recovering...");
+  }
+
   if (result.after?.healthy) {
     if (!quiet) {
       for (const action of result.actions) {
         console.log(`  ${G}✓${R} ${action}`);
       }
     }
-    return { checked: true, wasRunning: false, recovered: true };
+    return { checked: true, wasRunning: running, recovered: true };
   }
 
   // Chain recovery didn't fully succeed — report diagnosis
@@ -455,13 +459,13 @@ function checkAndRecoverSandboxProcesses(
       console.error(`  Recovery incomplete: ${result.after.diagnosis || "unknown"}`);
     }
     console.error(
-      `  Could not fully recover ${agentRuntime.getAgentDisplayName(_recoveryAgent)} dashboard chain.`,
+      `  Could not fully recover ${agentRuntime.getAgentDisplayName(agent)} dashboard chain.`,
     );
     console.error("  Connect to the sandbox and run manually:");
-    console.error(`    ${agentRuntime.getGatewayCommand(_recoveryAgent)}`);
+    console.error(`    ${agentRuntime.getGatewayCommand(agent)}`);
   }
 
-  return { checked: true, wasRunning: false, recovered: false };
+  return { checked: true, wasRunning: running, recovered: false };
 }
 
 function buildRecoveredSandboxEntry(
