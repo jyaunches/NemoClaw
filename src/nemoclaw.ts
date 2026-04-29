@@ -54,6 +54,7 @@ const { getVersion } = require("./lib/version");
 const onboardSession = require("./lib/onboard-session");
 import type { Session } from "./lib/onboard-session";
 const { parseLiveSandboxNames } = require("./lib/runtime-recovery");
+const { checkGuardsPresent, reEmitGuards } = require("./lib/guard-recovery");
 const { NOTICE_ACCEPT_ENV, NOTICE_ACCEPT_FLAG } = require("./lib/usage-notice");
 const { runDebugCommand } = require("./lib/debug-command");
 const { runDeprecatedOnboardAliasCommand, runOnboardCommand } = require("./lib/onboard-command");
@@ -297,6 +298,27 @@ function isSandboxGatewayRunning(sandboxName: string): boolean | null {
 function recoverSandboxProcesses(sandboxName: string, opts: { port?: number } = {}): boolean {
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const port = opts.port ?? agent?.forwardPort ?? DASHBOARD_PORT;
+
+  // ── Guard re-emission (#2701) ─────────────────────────────────
+  // Before launching the gateway, check whether the NODE_OPTIONS preload
+  // guard chain exists in /tmp. After a pod recreate, /tmp is fresh and
+  // the guards are gone — launching without them crash-loops the gateway
+  // on the first @homebridge/ciao os.networkInterfaces() call.
+  // Re-emit via kubectl exec (as root, bypassing Landlock) so the
+  // subsequent recovery script can source proxy-env.sh successfully.
+  const guardsPresent = checkGuardsPresent(sandboxName);
+  if (guardsPresent === false) {
+    const reEmitted = reEmitGuards(sandboxName);
+    if (!reEmitted) {
+      // Best-effort: log the failure but proceed with recovery anyway.
+      // The recovery script will emit the WARNING and the gateway may
+      // crash-loop, matching pre-fix behavior — at least we tried.
+      console.error(
+        "  [guard-recovery] Could not re-emit guard chain — gateway may crash-loop (#2701)",
+      );
+    }
+  }
+
   const agentScript = agentRuntime.buildRecoveryScript(agent, port);
   const script =
     agentScript ||

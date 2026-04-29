@@ -223,10 +223,12 @@ RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
 
 # Copy startup script and shared sandbox initialisation library
 COPY scripts/lib/sandbox-init.sh /usr/local/lib/nemoclaw/sandbox-init.sh
+COPY scripts/lib/emit-guards.sh /usr/local/lib/nemoclaw/emit-guards.sh
+COPY scripts/lib/guards/ /usr/local/lib/nemoclaw/guards/
 COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start
 COPY scripts/codex-acp-wrapper.sh /usr/local/bin/nemoclaw-codex-acp
 COPY scripts/generate-openclaw-config.py /usr/local/lib/nemoclaw/generate-openclaw-config.py
-RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp /usr/local/lib/nemoclaw/sandbox-init.sh
+RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp /usr/local/lib/nemoclaw/sandbox-init.sh /usr/local/lib/nemoclaw/emit-guards.sh
 
 # Build args for config that varies per deployment.
 # nemoclaw onboard passes these at image build time.

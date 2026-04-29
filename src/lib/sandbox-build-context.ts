@@ -91,6 +91,17 @@ function stageOptimizedSandboxBuildContext(
     path.join(rootDir, "scripts", "lib", "sandbox-init.sh"),
     path.join(stagedScriptsDir, "lib", "sandbox-init.sh"),
   );
+  // Guard re-emission script callable by recovery path (#2701)
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "emit-guards.sh"),
+    path.join(stagedScriptsDir, "lib", "emit-guards.sh"),
+  );
+  // Static JS guard files used by emit-guards.sh (#2701)
+  fs.cpSync(
+    path.join(rootDir, "scripts", "lib", "guards"),
+    path.join(stagedScriptsDir, "lib", "guards"),
+    { recursive: true },
+  );
   // OpenClaw config generator extracted in #2449 (fixed in #2565)
   fs.copyFileSync(
     path.join(rootDir, "scripts", "generate-openclaw-config.py"),
