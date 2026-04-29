@@ -95,9 +95,13 @@ import {
   persistChannelTokens,
 } from "./lib/sandbox-channels";
 import {
+  OPENSHELL_DOWNLOAD_TIMEOUT_MS,
   OPENSHELL_OPERATION_TIMEOUT_MS,
   OPENSHELL_PROBE_TIMEOUT_MS,
 } from "./lib/openshell-timeouts";
+import { buildChain } from "./lib/dashboard-contract";
+import type { DashboardRecoverDeps } from "./lib/dashboard-recover";
+import { recoverDashboardChain } from "./lib/dashboard-recover";
 const onboardProviders = require("./lib/onboard-providers");
 
 // ── Global commands (derived from command registry) ──────────────
@@ -346,10 +350,62 @@ function ensureSandboxPortForward(sandboxName: string): void {
   });
 }
 
+/** Build bounded DashboardRecoverDeps wired to real openshell calls. */
+function buildDashboardRecoverDeps(): DashboardRecoverDeps {
+  return {
+    executeSandboxCommand: (name: string, script: string) => {
+      const result = executeSandboxCommand(name, script);
+      if (!result) return null;
+      return { status: result.status, stdout: result.stdout };
+    },
+    captureForwardList: () => {
+      const result = captureOpenshell(["forward", "list"], {
+        ignoreError: true,
+        timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+      });
+      return result.status === 0 ? result.output : null;
+    },
+    downloadSandboxConfig: (name: string) => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cfg-"));
+      try {
+        const destDir = `${tmpDir}${path.sep}`;
+        const result = runOpenshell(
+          ["sandbox", "download", name, "/sandbox/.openclaw/openclaw.json", destDir],
+          { ignoreError: true, stdio: ["ignore", "ignore", "ignore"], timeout: OPENSHELL_DOWNLOAD_TIMEOUT_MS },
+        );
+        if (result.status !== 0) return null;
+        const files = fs.readdirSync(tmpDir, { recursive: true }) as string[];
+        const jsonFile = files.find((f: string) => f.endsWith("openclaw.json"));
+        if (!jsonFile) return null;
+        return JSON.parse(fs.readFileSync(path.join(tmpDir, jsonFile), "utf-8"));
+      } catch {
+        return null;
+      } finally {
+        try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
+      }
+    },
+    restartGateway: (name: string, _port: number, _agent: unknown) => recoverSandboxProcesses(name),
+    stopForward: (port: number) => {
+      runOpenshell(["forward", "stop", String(port)], {
+        ignoreError: true,
+        timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
+      });
+    },
+    startForward: (target: string, name: string) => {
+      runOpenshell(["forward", "start", "--background", target, name], {
+        ignoreError: true,
+        timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
+      });
+    },
+    getSessionAgent: (name: string) => agentRuntime.getSessionAgent(name),
+  };
+}
+
 /**
  * Detect and recover from a sandbox that survived a gateway restart but
- * whose OpenClaw processes are not running. Returns an object describing
- * the outcome: { checked, wasRunning, recovered }.
+ * whose OpenClaw processes are not running. Uses the Dashboard Delivery
+ * Contract to verify and recover all links (gateway, forward, CORS).
+ * Returns an object describing the outcome: { checked, wasRunning, recovered }.
  */
 function checkAndRecoverSandboxProcesses(
   sandboxName: string,
@@ -363,7 +419,7 @@ function checkAndRecoverSandboxProcesses(
     return { checked: true, wasRunning: true, recovered: false };
   }
 
-  // Gateway not running — attempt recovery
+  // Gateway not running — attempt chain-level recovery
   const _recoveryAgent = agentRuntime.getSessionAgent(sandboxName);
   if (!quiet) {
     console.log("");
@@ -373,33 +429,39 @@ function checkAndRecoverSandboxProcesses(
     console.log("  Recovering...");
   }
 
-  const recovered = recoverSandboxProcesses(sandboxName);
-  if (recovered) {
-    // Wait for gateway to bind its HTTP port before declaring success
-    sleepSeconds(3);
-    if (isSandboxGatewayRunning(sandboxName) !== true) {
-      if (!quiet) {
-        console.error("  Gateway process started but is not responding.");
-        console.error("  Check /tmp/gateway.log inside the sandbox for details.");
-      }
-      return { checked: true, wasRunning: false, recovered: false };
-    }
-    ensureSandboxPortForward(sandboxName);
+  const agent = agentRuntime.getSessionAgent(sandboxName);
+  const port = agent?.forwardPort ?? DASHBOARD_PORT;
+  const chain = buildChain({ port, chatUiUrl: process.env.CHAT_UI_URL });
+  const deps = buildDashboardRecoverDeps();
+  const result = recoverDashboardChain(sandboxName, chain, deps);
+
+  if (result.after?.healthy) {
     if (!quiet) {
-      console.log(
-        `  ${G}✓${R} ${agentRuntime.getAgentDisplayName(_recoveryAgent)} gateway restarted inside sandbox.`,
-      );
-      console.log(`  ${G}✓${R} Dashboard port forward re-established.`);
+      for (const action of result.actions) {
+        console.log(`  ${G}✓${R} ${action}`);
+      }
     }
-  } else if (!quiet) {
+    return { checked: true, wasRunning: false, recovered: true };
+  }
+
+  // Chain recovery didn't fully succeed — report diagnosis
+  if (!quiet) {
+    if (result.actions.length > 0) {
+      for (const action of result.actions) {
+        console.log(`  • ${action}`);
+      }
+    }
+    if (result.after && !result.after.healthy) {
+      console.error(`  Recovery incomplete: ${result.after.diagnosis || "unknown"}`);
+    }
     console.error(
-      `  Could not restart ${agentRuntime.getAgentDisplayName(_recoveryAgent)} gateway automatically.`,
+      `  Could not fully recover ${agentRuntime.getAgentDisplayName(_recoveryAgent)} dashboard chain.`,
     );
     console.error("  Connect to the sandbox and run manually:");
     console.error(`    ${agentRuntime.getGatewayCommand(_recoveryAgent)}`);
   }
 
-  return { checked: true, wasRunning: false, recovered };
+  return { checked: true, wasRunning: false, recovered: false };
 }
 
 function buildRecoveredSandboxEntry(
