@@ -98,7 +98,10 @@ if [ -z "${NVIDIA_API_KEY:-}" ] || [[ "${NVIDIA_API_KEY}" != nvapi-* ]]; then
 fi
 pass "NVIDIA_API_KEY is set"
 
-cd "$REPO" || { fail "Could not cd to repo root"; exit 1; }
+cd "$REPO" || {
+  fail "Could not cd to repo root"
+  exit 1
+}
 
 export NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME"
 export NEMOCLAW_RECREATE_SANDBOX="${NEMOCLAW_RECREATE_SANDBOX:-1}"
@@ -131,8 +134,14 @@ if [ "$install_exit" -ne 0 ]; then
 fi
 pass "NemoClaw installed"
 
-command -v nemoclaw >/dev/null 2>&1 || { fail "nemoclaw not on PATH"; exit 1; }
-command -v openshell >/dev/null 2>&1 || { fail "openshell not on PATH"; exit 1; }
+command -v nemoclaw >/dev/null 2>&1 || {
+  fail "nemoclaw not on PATH"
+  exit 1
+}
+command -v openshell >/dev/null 2>&1 || {
+  fail "openshell not on PATH"
+  exit 1
+}
 pass "CLIs on PATH"
 
 # ══════════════════════════════════════════════════════════════════════
@@ -142,9 +151,9 @@ section "Phase 2: Inject skill fixture"
 
 info "Injecting ${SKILL_ID} into sandbox '${SANDBOX_NAME}'..."
 if ! SANDBOX_NAME="$SANDBOX_NAME" \
-     SKILL_ID="$SKILL_ID" \
-     SKILL_DESCRIPTION="E2E smoke skill injected for agent verification" \
-     bash "$E2E_DIR/e2e-cloud-experimental/features/skill/add-sandbox-skill.sh"; then
+  SKILL_ID="$SKILL_ID" \
+  SKILL_DESCRIPTION="E2E smoke skill injected for agent verification" \
+  bash "$E2E_DIR/e2e-cloud-experimental/features/skill/add-sandbox-skill.sh"; then
   fail "Failed to inject ${SKILL_ID}"
   exit 1
 fi
@@ -165,10 +174,10 @@ while [ "$attempt" -le "$MAX_ATTEMPTS" ]; do
   set +e
   agent_out=$(
     NVIDIA_API_KEY="$NVIDIA_API_KEY" \
-    SANDBOX_NAME="$SANDBOX_NAME" \
-    SKILL_ID="$SKILL_ID" \
-    VERIFY_TOKEN="$VERIFY_TOKEN" \
-    bash "$E2E_DIR/e2e-cloud-experimental/features/skill/verify-sandbox-skill-via-agent.sh" 2>&1
+      SANDBOX_NAME="$SANDBOX_NAME" \
+      SKILL_ID="$SKILL_ID" \
+      VERIFY_TOKEN="$VERIFY_TOKEN" \
+      bash "$E2E_DIR/e2e-cloud-experimental/features/skill/verify-sandbox-skill-via-agent.sh" 2>&1
   )
   agent_rc=$?
   set -uo pipefail

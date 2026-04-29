@@ -144,7 +144,10 @@ fi
 # ══════════════════════════════════════════════════════════════════════
 section "Phase 3: Install via public URL"
 
-cd "$REPO" || { fail "Could not cd to repo root: $REPO"; exit 1; }
+cd "$REPO" || {
+  fail "Could not cd to repo root: $REPO"
+  exit 1
+}
 
 export NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME"
 export NEMOCLAW_EXPERIMENTAL=1

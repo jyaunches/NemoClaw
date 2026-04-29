@@ -107,7 +107,10 @@ if [ -z "${NVIDIA_API_KEY:-}" ] || [[ "${NVIDIA_API_KEY}" != nvapi-* ]]; then
 fi
 pass "NVIDIA_API_KEY is set"
 
-cd "$REPO" || { fail "Could not cd to repo root"; exit 1; }
+cd "$REPO" || {
+  fail "Could not cd to repo root"
+  exit 1
+}
 
 export NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME"
 export NEMOCLAW_RECREATE_SANDBOX="${NEMOCLAW_RECREATE_SANDBOX:-1}"
@@ -140,8 +143,14 @@ if [ "$install_exit" -ne 0 ]; then
 fi
 pass "NemoClaw installed"
 
-command -v nemoclaw >/dev/null 2>&1 || { fail "nemoclaw not on PATH"; exit 1; }
-command -v openshell >/dev/null 2>&1 || { fail "openshell not on PATH"; exit 1; }
+command -v nemoclaw >/dev/null 2>&1 || {
+  fail "nemoclaw not on PATH"
+  exit 1
+}
+command -v openshell >/dev/null 2>&1 || {
+  fail "openshell not on PATH"
+  exit 1
+}
 pass "CLIs on PATH"
 
 # ══════════════════════════════════════════════════════════════════════
@@ -149,7 +158,10 @@ pass "CLIs on PATH"
 # ══════════════════════════════════════════════════════════════════════
 section "Phase 2: Live chat (inference.local /v1/chat/completions)"
 
-command -v python3 >/dev/null 2>&1 || { fail "python3 not on PATH"; exit 1; }
+command -v python3 >/dev/null 2>&1 || {
+  fail "python3 not on PATH"
+  exit 1
+}
 
 payload=$(CLOUD_MODEL="$CLOUD_MODEL" python3 -c "
 import json, os
@@ -158,7 +170,10 @@ print(json.dumps({
     'messages': [{'role': 'user', 'content': 'Reply with exactly one word: PONG'}],
     'max_tokens': 100,
 }))
-") || { fail "Could not build chat payload"; exit 1; }
+") || {
+  fail "Could not build chat payload"
+  exit 1
+}
 
 MAX_ATTEMPTS="${E2E_PHASE_5B_MAX_ATTEMPTS:-3}"
 RETRY_SLEEP="${E2E_PHASE_5B_RETRY_SLEEP_SEC:-5}"
