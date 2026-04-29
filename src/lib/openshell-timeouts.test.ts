@@ -29,7 +29,7 @@ describe("openshell-timeouts", () => {
   it("maintains expected ordering: PROBE < OPERATION <= DOWNLOAD < HEAVY", () => {
     expect(OPENSHELL_PROBE_TIMEOUT_MS).toBeLessThan(OPENSHELL_OPERATION_TIMEOUT_MS);
     expect(OPENSHELL_OPERATION_TIMEOUT_MS).toBeLessThanOrEqual(OPENSHELL_DOWNLOAD_TIMEOUT_MS);
-    expect(OPENSHELL_DOWNLOAD_TIMEOUT_MS).toBeLessThanOrEqual(OPENSHELL_HEAVY_TIMEOUT_MS);
+    expect(OPENSHELL_DOWNLOAD_TIMEOUT_MS).toBeLessThan(OPENSHELL_HEAVY_TIMEOUT_MS);
   });
 
   it("uses the same probe constant name as PR #2454 for forward compatibility", () => {
