@@ -192,17 +192,9 @@ function collectSystem(collectDir: string, quick: boolean): void {
 function collectProcesses(collectDir: string, quick: boolean): void {
   section("Processes");
   if (isMacOS) {
-    collectShell(
-      collectDir,
-      "ps-cpu",
-      "ps -eo pid,ppid,comm,%mem,%cpu | sort -k5 -rn | head -30",
-    );
+    collectShell(collectDir, "ps-cpu", "ps -eo pid,ppid,comm,%mem,%cpu | sort -k5 -rn | head -30");
   } else {
-    collectShell(
-      collectDir,
-      "ps-cpu",
-      "ps -eo pid,ppid,cmd,%mem,%cpu --sort=-%cpu | head -30",
-    );
+    collectShell(collectDir, "ps-cpu", "ps -eo pid,ppid,cmd,%mem,%cpu --sort=-%cpu | head -30");
   }
 
   if (!quick) {
@@ -214,11 +206,7 @@ function collectProcesses(collectDir: string, quick: boolean): void {
       );
       collectShell(collectDir, "top", "top -l 1 | head -50");
     } else {
-      collectShell(
-        collectDir,
-        "ps-mem",
-        "ps -eo pid,ppid,cmd,%mem,%cpu --sort=-%mem | head -30",
-      );
+      collectShell(collectDir, "ps-mem", "ps -eo pid,ppid,cmd,%mem,%cpu --sort=-%mem | head -30");
       collectShell(collectDir, "top", "top -b -n 1 | head -50");
     }
   }
@@ -229,13 +217,7 @@ function collectGpu(collectDir: string, quick: boolean): void {
   collect(collectDir, "nvidia-smi", "nvidia-smi", []);
 
   if (!quick) {
-    collect(collectDir, "nvidia-smi-dmon", "nvidia-smi", [
-      "dmon",
-      "-s",
-      "pucvmet",
-      "-c",
-      "10",
-    ]);
+    collect(collectDir, "nvidia-smi-dmon", "nvidia-smi", ["dmon", "-s", "pucvmet", "-c", "10"]);
     collect(collectDir, "nvidia-smi-query", "nvidia-smi", [
       "--query-gpu=name,utilization.gpu,utilization.memory,memory.total,memory.used,temperature.gpu,power.draw",
       "--format=csv",
@@ -273,11 +255,7 @@ function collectDocker(collectDir: string, quick: boolean): void {
   }
 }
 
-function collectOpenshell(
-  collectDir: string,
-  sandboxName: string,
-  quick: boolean,
-): void {
+function collectOpenshell(collectDir: string, sandboxName: string, quick: boolean): void {
   section("OpenShell");
   collect(collectDir, "openshell-status", "openshell", ["status"]);
   collect(collectDir, "openshell-sandbox-list", "openshell", ["sandbox", "list"]);
@@ -289,11 +267,7 @@ function collectOpenshell(
   }
 }
 
-function collectSandboxInternals(
-  collectDir: string,
-  sandboxName: string,
-  quick: boolean,
-): void {
+function collectSandboxInternals(collectDir: string, sandboxName: string, quick: boolean): void {
   if (!commandExists("openshell")) return;
 
   // Check if sandbox exists
@@ -343,13 +317,7 @@ function collectSandboxInternals(
     collect(collectDir, "sandbox-ps", "ssh", [...sshBase, "ps", "-ef"]);
     collect(collectDir, "sandbox-free", "ssh", [...sshBase, "free", "-m"]);
     if (!quick) {
-      collect(collectDir, "sandbox-top", "ssh", [
-        ...sshBase,
-        "top",
-        "-b",
-        "-n",
-        "1",
-      ]);
+      collect(collectDir, "sandbox-top", "ssh", [...sshBase, "top", "-b", "-n", "1"]);
       collect(collectDir, "sandbox-gateway-log", "ssh", [
         ...sshBase,
         "tail",
@@ -438,10 +406,14 @@ function collectKernelMessages(collectDir: string): void {
  * guidance that goes with the generated file.
  */
 export function createTarball(collectDir: string, output: string): boolean {
-  const result = spawnSync("tar", ["czf", output, "-C", dirname(collectDir), basename(collectDir)], {
-    stdio: "inherit",
-    timeout: 60_000,
-  });
+  const result = spawnSync(
+    "tar",
+    ["czf", output, "-C", dirname(collectDir), basename(collectDir)],
+    {
+      stdio: "inherit",
+      timeout: 60_000,
+    },
+  );
   if (result.status !== 0 || result.signal) {
     const reason = result.signal
       ? `killed by signal ${result.signal}`

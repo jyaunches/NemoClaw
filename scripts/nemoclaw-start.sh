@@ -121,14 +121,14 @@ if [ "${1:-}" = "env" ]; then
   _self_wrapper_index=""
   for ((i = 1; i < ${#_raw_args[@]}; i += 1)); do
     case "${_raw_args[$i]}" in
-      *=*) ;;
-      nemoclaw-start | /usr/local/bin/nemoclaw-start)
-        _self_wrapper_index="$i"
-        break
-        ;;
-      *)
-        break
-        ;;
+    *=*) ;;
+    nemoclaw-start | /usr/local/bin/nemoclaw-start)
+      _self_wrapper_index="$i"
+      break
+      ;;
+    *)
+      break
+      ;;
     esac
   done
   if [ -n "$_self_wrapper_index" ]; then
@@ -143,7 +143,7 @@ fi
 # receiving our own name as $1 would otherwise recurse via the NEMOCLAW_CMD
 # exec path. Only strip from $1 — later args with this name are legitimate.
 case "${1:-}" in
-  nemoclaw-start | /usr/local/bin/nemoclaw-start) shift ;;
+nemoclaw-start | /usr/local/bin/nemoclaw-start) shift ;;
 esac
 NEMOCLAW_CMD=("$@")
 # Validate NEMOCLAW_DASHBOARD_PORT if set (same behavior as ports.js: fail fast).
@@ -153,10 +153,10 @@ if [ -z "$_DASHBOARD_PORT_RAW" ]; then
 else
   _DASHBOARD_PORT="$(printf '%s' "$_DASHBOARD_PORT_RAW" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
   case "$_DASHBOARD_PORT" in
-    *[!0-9]* | '')
-      echo "[SECURITY] Invalid NEMOCLAW_DASHBOARD_PORT='${NEMOCLAW_DASHBOARD_PORT}' — must be an integer between 1024 and 65535" >&2
-      exit 1
-      ;;
+  *[!0-9]* | '')
+    echo "[SECURITY] Invalid NEMOCLAW_DASHBOARD_PORT='${NEMOCLAW_DASHBOARD_PORT}' — must be an integer between 1024 and 65535" >&2
+    exit 1
+    ;;
   esac
   if [ "$_DASHBOARD_PORT" -lt 1024 ] || [ "$_DASHBOARD_PORT" -gt 65535 ]; then
     echo "[SECURITY] Invalid NEMOCLAW_DASHBOARD_PORT='${NEMOCLAW_DASHBOARD_PORT}' — must be an integer between 1024 and 65535" >&2
@@ -194,12 +194,12 @@ _SANDBOX_HOME="/sandbox"          # Home dir for the sandbox user (useradd -d /s
 
 apply_model_override() {
   # Any of these env vars trigger a config patch
-  [ -n "${NEMOCLAW_MODEL_OVERRIDE:-}" ] \
-    || [ -n "${NEMOCLAW_INFERENCE_API_OVERRIDE:-}" ] \
-    || [ -n "${NEMOCLAW_CONTEXT_WINDOW:-}" ] \
-    || [ -n "${NEMOCLAW_MAX_TOKENS:-}" ] \
-    || [ -n "${NEMOCLAW_REASONING:-}" ] \
-    || return 0
+  [ -n "${NEMOCLAW_MODEL_OVERRIDE:-}" ] ||
+    [ -n "${NEMOCLAW_INFERENCE_API_OVERRIDE:-}" ] ||
+    [ -n "${NEMOCLAW_CONTEXT_WINDOW:-}" ] ||
+    [ -n "${NEMOCLAW_MAX_TOKENS:-}" ] ||
+    [ -n "${NEMOCLAW_REASONING:-}" ] ||
+    return 0
 
   # SECURITY: Only root can write to /sandbox/.openclaw (root:root 444).
   # In non-root mode the sandbox user cannot modify the config.
@@ -234,11 +234,11 @@ apply_model_override() {
   # SECURITY: Allowlist inference API types to prevent unexpected routing.
   if [ -n "$api_override" ]; then
     case "$api_override" in
-      openai-completions | anthropic-messages) ;;
-      *)
-        printf '[SECURITY] NEMOCLAW_INFERENCE_API_OVERRIDE must be "openai-completions" or "anthropic-messages", got "%s"\n' "$api_override" >&2
-        return 1
-        ;;
+    openai-completions | anthropic-messages) ;;
+    *)
+      printf '[SECURITY] NEMOCLAW_INFERENCE_API_OVERRIDE must be "openai-completions" or "anthropic-messages", got "%s"\n' "$api_override" >&2
+      return 1
+      ;;
     esac
   fi
 
@@ -258,11 +258,11 @@ apply_model_override() {
   # Validate reasoning is true/false
   if [ -n "$reasoning" ]; then
     case "$reasoning" in
-      true | false) ;;
-      *)
-        printf '[SECURITY] NEMOCLAW_REASONING must be "true" or "false", got "%s"\n' "$reasoning" >&2
-        return 1
-        ;;
+    true | false) ;;
+    *)
+      printf '[SECURITY] NEMOCLAW_REASONING must be "true" or "false", got "%s"\n' "$reasoning" >&2
+      return 1
+      ;;
     esac
   fi
 
@@ -410,20 +410,20 @@ apply_slack_token_override() {
 
   # SECURITY: Validate token prefixes — reject anything that doesn't look like a real Slack token.
   case "${SLACK_BOT_TOKEN}" in
-    xoxb-*) ;;
-    *)
-      printf '[channels] SLACK_BOT_TOKEN does not start with xoxb- — skipping Slack placeholder resolution\n' >&2
-      return 0
-      ;;
+  xoxb-*) ;;
+  *)
+    printf '[channels] SLACK_BOT_TOKEN does not start with xoxb- — skipping Slack placeholder resolution\n' >&2
+    return 0
+    ;;
   esac
 
   if [ -n "${SLACK_APP_TOKEN:-}" ]; then
     case "$SLACK_APP_TOKEN" in
-      xapp-*) ;;
-      *)
-        printf '[channels] SLACK_APP_TOKEN does not start with xapp- — skipping Slack placeholder resolution\n' >&2
-        return 0
-        ;;
+    xapp-*) ;;
+    *)
+      printf '[channels] SLACK_APP_TOKEN does not start with xapp- — skipping Slack placeholder resolution\n' >&2
+      return 0
+      ;;
     esac
   else
     printf '[channels] Warning: SLACK_BOT_TOKEN is set but SLACK_APP_TOKEN is missing — Socket Mode requires both tokens\n' >&2
@@ -1576,25 +1576,25 @@ if [ "$(id -u)" -ne 0 ]; then
       current="$(readlink -f "$link_path" 2>/dev/null || true)"
       expected="$(readlink -f "$target" 2>/dev/null || true)"
       [ "$current" != "$expected" ] || return 0
-      ln -snf "$target" "$link_path" 2>/dev/null \
-        && echo "[setup] repaired identity symlink" >&2 \
-        || echo "[setup] could not repair identity symlink" >&2
+      ln -snf "$target" "$link_path" 2>/dev/null &&
+        echo "[setup] repaired identity symlink" >&2 ||
+        echo "[setup] could not repair identity symlink" >&2
       return 0
     fi
 
     # Nothing exists yet — create the symlink.
     if [ ! -e "$link_path" ]; then
-      ln -snf "$target" "$link_path" 2>/dev/null \
-        && echo "[setup] created identity symlink" >&2 \
-        || echo "[setup] could not create identity symlink" >&2
+      ln -snf "$target" "$link_path" 2>/dev/null &&
+        echo "[setup] created identity symlink" >&2 ||
+        echo "[setup] could not create identity symlink" >&2
       return 0
     fi
 
     # A non-symlink entry exists — back it up, then replace.
     local backup
     backup="${link_path}.bak.$(date +%s)"
-    if mv "$link_path" "$backup" 2>/dev/null \
-      && ln -snf "$target" "$link_path" 2>/dev/null; then
+    if mv "$link_path" "$backup" 2>/dev/null &&
+      ln -snf "$target" "$link_path" 2>/dev/null; then
       echo "[setup] replaced non-symlink identity path (backup: ${backup})" >&2
     else
       echo "[setup] could not replace ${link_path}; writes may fail" >&2
@@ -1610,9 +1610,9 @@ if [ "$(id -u)" -ne 0 ]; then
       mkdir -p "${data_dir}/${sub}" 2>/dev/null || true
     done
     if find "$data_dir" ! -uid "$(id -u)" -print -quit 2>/dev/null | grep -q .; then
-      chown -R "$(id -u):$(id -g)" "$data_dir" 2>/dev/null \
-        && echo "[setup] fixed ownership on ${data_dir}" >&2 \
-        || echo "[setup] could not fix ownership on ${data_dir}; writes may fail" >&2
+      chown -R "$(id -u):$(id -g)" "$data_dir" 2>/dev/null &&
+        echo "[setup] fixed ownership on ${data_dir}" >&2 ||
+        echo "[setup] could not fix ownership on ${data_dir}; writes may fail" >&2
     fi
     ensure_identity_symlink "$data_dir" "$openclaw_dir"
   }

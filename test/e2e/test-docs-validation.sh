@@ -58,7 +58,7 @@ _candidate="$(cd "${_script_dir}/../.." && pwd)"
 if [ -d /workspace ] && [ -f /workspace/package.json ] && [ -d /workspace/test/e2e ]; then
   REPO="/workspace"
 elif [ -f "${_candidate}/package.json" ] && [ -d "${_candidate}/test/e2e" ]; then
-  REPO="${_candidate}"  # exported for child scripts
+  REPO="${_candidate}" # exported for child scripts
 else
   echo "ERROR: Cannot find repo root."
   exit 1

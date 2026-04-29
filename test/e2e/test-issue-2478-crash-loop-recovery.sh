@@ -193,7 +193,7 @@ gateway_serves_inference() {
     # entries with "object" or "id". Match any of the three to be tolerant
     # of provider-specific shapes (NVIDIA Endpoints vs. local Ollama).
     case "$out" in
-      *'"data"'* | *'"object"'* | *'"id"'*) return 0 ;;
+    *'"data"'* | *'"object"'* | *'"id"'*) return 0 ;;
     esac
     sleep 3
     elapsed=$((elapsed + 3))
