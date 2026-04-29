@@ -94,7 +94,10 @@ import {
   knownChannelNames,
   persistChannelTokens,
 } from "./lib/sandbox-channels";
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "./lib/openshell-timeouts";
+import {
+  OPENSHELL_OPERATION_TIMEOUT_MS,
+  OPENSHELL_PROBE_TIMEOUT_MS,
+} from "./lib/openshell-timeouts";
 const onboardProviders = require("./lib/onboard-providers");
 
 // ── Global commands (derived from command registry) ──────────────
@@ -637,7 +640,7 @@ async function recoverNamedGatewayRuntime() {
 
   runOpenshell(["gateway", "select", "nemoclaw"], {
     ignoreError: true,
-    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+    timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
   });
   let after = getNamedGatewayLifecycleState();
   if (after.state === "healthy_named") {
@@ -658,7 +661,7 @@ async function recoverNamedGatewayRuntime() {
     }
     runOpenshell(["gateway", "select", "nemoclaw"], {
       ignoreError: true,
-      timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+      timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
     });
     after = getNamedGatewayLifecycleState();
     if (after.state === "healthy_named") {
@@ -748,7 +751,7 @@ function reconcileMissingAgainstNamedGateway(
   if (lifecycle.state === "connected_other") {
     runOpenshell(["gateway", "select", "nemoclaw"], {
       ignoreError: true,
-      timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+      timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
     });
     const retry = getSandboxGatewayState(sandboxName);
     if (retry.state === "present") {
