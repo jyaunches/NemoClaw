@@ -1,0 +1,65 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Trigger a sandbox image rebuild in OpenShell-Community when NemoClaw
+# publishes a new release. The community image
+# (ghcr.io/nvidia/openshell-community/sandboxes/openclaw-nvidia:latest)
+# embeds OpenClaw + NemoClaw patches and must be rebuilt when either
+# changes. Without this trigger, the :latest tag drifts and users on
+# Brev Launchable get stale versions (see #2342, #1242).
+#
+# Prerequisites:
+#   - COMMUNITY_DISPATCH_TOKEN secret: a PAT with `repo` scope on
+#     NVIDIA/OpenShell-Community (or a fine-grained token with
+#     contents:write + actions:write on that repo).
+#   - OpenShell-Community's build-sandboxes.yml must accept
+#     `repository_dispatch` events with type `nemoclaw-release`.
+#
+# What this does:
+#   1. On NemoClaw release (tag push or GitHub Release published),
+#      sends a repository_dispatch event to OpenShell-Community.
+#   2. OpenShell-Community's build-sandboxes.yml picks up the event
+#      and rebuilds all sandbox images (including openclaw-nvidia).
+#   3. The rebuilt image gets tagged :latest and pushed to GHCR.
+#
+# Manual fallback:
+#   gh workflow run build-sandboxes.yml --repo NVIDIA/OpenShell-Community
+
+name: trigger-community-image-rebuild
+
+on:
+  release:
+    types: [published]
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    # Only dispatch from the default branch (prevents accidental triggers
+    # from pre-release tags on feature branches).
+    if: github.repository == 'NVIDIA/NemoClaw'
+    timeout-minutes: 2
+    steps:
+      - name: Dispatch rebuild to OpenShell-Community
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.COMMUNITY_DISPATCH_TOKEN }}
+          repository: NVIDIA/OpenShell-Community
+          event-type: nemoclaw-release
+          client-payload: |
+            {
+              "tag": "${{ github.event.release.tag_name || github.ref_name }}",
+              "sha": "${{ github.sha }}",
+              "triggered_by": "NemoClaw release workflow"
+            }
+
+      - name: Log dispatch
+        run: |
+          echo "Dispatched nemoclaw-release event to NVIDIA/OpenShell-Community"
+          echo "  Tag: ${{ github.event.release.tag_name || github.ref_name }}"
+          echo "  SHA: ${{ github.sha }}"

@@ -29,7 +29,10 @@
 #
 # Environment overrides:
 #   OPENSHELL_VERSION     — OpenShell CLI release tag (default: v0.0.36)
-#   NEMOCLAW_REF          — NemoClaw git ref to clone (default: main)
+#   NEMOCLAW_REF          — NemoClaw git ref to clone (default: stable)
+#                           "stable" or "latest" → resolves to newest v* tag
+#                           "main" → tracks the main branch (unstable)
+#                           "v0.0.30" → pins to a specific tag
 #   NEMOCLAW_CLONE_DIR    — Where to clone NemoClaw (default: ~/NemoClaw)
 #   SKIP_DOCKER_PULL      — Set to 1 to skip Docker image pre-pulls
 #
@@ -41,7 +44,7 @@ set -euo pipefail
 
 # ── Configuration ────────────────────────────────────────────────────
 OPENSHELL_VERSION="${OPENSHELL_VERSION:-v0.0.36}"
-NEMOCLAW_REF="${NEMOCLAW_REF:-main}"
+NEMOCLAW_REF="${NEMOCLAW_REF:-stable}"
 TARGET_USER="${SUDO_USER:-$(id -un)}"
 TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
 NEMOCLAW_CLONE_DIR="${NEMOCLAW_CLONE_DIR:-${TARGET_HOME}/NemoClaw}"
@@ -71,6 +74,30 @@ fail() {
   printf '\033[0;31m[%s ci-cpu]\033[0m %s\n' "$(_ts)" "$1"
   exit 1
 }
+
+# ── Resolve stable ref ───────────────────────────────────────────────
+# When NEMOCLAW_REF is "stable" or "latest", resolve to the newest v* tag
+# from the NemoClaw repo. Falls back to "main" if tag resolution fails
+# (e.g. no network access at this point, or no tags exist).
+# Fixes #1242 — public Brev launchable should default to a stable version.
+resolve_stable_ref() {
+  case "$NEMOCLAW_REF" in
+    stable|latest)
+      local tag
+      tag=$(git ls-remote --tags --sort=-v:refname \
+        "https://github.com/NVIDIA/NemoClaw.git" 'refs/tags/v*' 2>/dev/null \
+        | head -1 | sed 's|.*refs/tags/||')
+      if [[ -n "$tag" ]]; then
+        NEMOCLAW_REF="$tag"
+        info "Resolved stable ref to latest release: $NEMOCLAW_REF"
+      else
+        warn "Could not resolve latest release tag — falling back to main"
+        NEMOCLAW_REF="main"
+      fi
+      ;;
+  esac
+}
+resolve_stable_ref
 
 # ── Retry helper ─────────────────────────────────────────────────────
 # Usage: retry 3 10 "description" command arg1 arg2
