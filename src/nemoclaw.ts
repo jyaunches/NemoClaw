@@ -376,7 +376,7 @@ function buildDashboardRecoverDeps(): DashboardRecoverDeps {
         );
         if (result.status !== 0) return null;
         const files = fs.readdirSync(tmpDir, { recursive: true }) as string[];
-        const jsonFile = files.find((f: string) => f.endsWith("openclaw.json"));
+        const jsonFile = files.find((f) => f.endsWith("openclaw.json"));
         if (!jsonFile) return null;
         return JSON.parse(fs.readFileSync(path.join(tmpDir, jsonFile), "utf-8"));
       } catch {
@@ -385,7 +385,11 @@ function buildDashboardRecoverDeps(): DashboardRecoverDeps {
         try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
       }
     },
-    restartGateway: (name: string, port: number, _agent: unknown) => recoverSandboxProcesses(name, { port }),
+    restartGateway: (name: string, port: number, _agent: unknown) => {
+      const ok = recoverSandboxProcesses(name, { port });
+      if (ok) sleepSeconds(3); // Wait for HTTP listener to bind before re-verify
+      return ok;
+    },
     stopForward: (port: number) => {
       runOpenshell(["forward", "stop", String(port)], {
         ignoreError: true,
