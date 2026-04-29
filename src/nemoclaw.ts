@@ -424,7 +424,20 @@ function checkAndRecoverSandboxProcesses(
   }
 
   const agent = agentRuntime.getSessionAgent(sandboxName);
-  const port = agent?.forwardPort ?? DASHBOARD_PORT;
+
+  // Dashboard chain recovery only applies to OpenClaw sandboxes.
+  // Non-OpenClaw agents (Hermes, etc.) use different config paths and don't
+  // expose the OpenClaw control UI — fall back to gateway-only recovery.
+  if (agent !== null) {
+    return checkAndRecoverGatewayOnly(sandboxName, running, agent, { quiet });
+  }
+
+  // OpenClaw sandbox: use the registry's persisted dashboardPort (which
+  // reflects auto-allocated or user-overridden ports) before falling back
+  // to the default. This ensures multi-sandbox setups with custom ports
+  // (e.g. 18790) probe and recover the correct port.
+  const sb = registry.getSandbox(sandboxName);
+  const port = sb?.dashboardPort ?? DASHBOARD_PORT;
   const chain = buildChain({ port, chatUiUrl: process.env.CHAT_UI_URL });
   const deps = buildDashboardRecoverDeps();
   const result = recoverDashboardChain(sandboxName, chain, deps);
@@ -437,9 +450,7 @@ function checkAndRecoverSandboxProcesses(
   // Recovery was attempted — report progress
   if (!quiet && !running) {
     console.log("");
-    console.log(
-      `  ${agentRuntime.getAgentDisplayName(agent)} gateway is not running inside the sandbox (sandbox likely restarted).`,
-    );
+    console.log("  OpenClaw gateway is not running inside the sandbox (sandbox likely restarted).");
     console.log("  Recovering...");
   }
 
@@ -462,14 +473,65 @@ function checkAndRecoverSandboxProcesses(
     if (result.after && !result.after.healthy) {
       console.error(`  Recovery incomplete: ${result.after.diagnosis || "unknown"}`);
     }
-    console.error(
-      `  Could not fully recover ${agentRuntime.getAgentDisplayName(agent)} dashboard chain.`,
-    );
+    console.error("  Could not fully recover OpenClaw dashboard chain.");
     console.error("  Connect to the sandbox and run manually:");
     console.error(`    ${agentRuntime.getGatewayCommand(agent)}`);
   }
 
   return { checked: true, wasRunning: running, recovered: false };
+}
+
+/**
+ * Simplified gateway-only recovery for non-OpenClaw agents (Hermes, etc.).
+ * Only checks/restarts the gateway process and re-establishes the port forward.
+ * Does NOT attempt CORS verification (agents use different config paths).
+ */
+function checkAndRecoverGatewayOnly(
+  sandboxName: string,
+  running: boolean,
+  agent: unknown,
+  { quiet = false }: { quiet?: boolean } = {},
+) {
+  if (running) {
+    return { checked: true, wasRunning: true, recovered: false };
+  }
+
+  if (!quiet) {
+    console.log("");
+    console.log(
+      `  ${agentRuntime.getAgentDisplayName(agent)} gateway is not running inside the sandbox (sandbox likely restarted).`,
+    );
+    console.log("  Recovering...");
+  }
+
+  const sb = registry.getSandbox(sandboxName);
+  const port = sb?.dashboardPort ?? (agent as { forwardPort?: number })?.forwardPort ?? DASHBOARD_PORT;
+  const recovered = recoverSandboxProcesses(sandboxName, { port });
+  if (recovered) {
+    sleepSeconds(3);
+    if (isSandboxGatewayRunning(sandboxName) !== true) {
+      if (!quiet) {
+        console.error("  Gateway process started but is not responding.");
+        console.error("  Check /tmp/gateway.log inside the sandbox for details.");
+      }
+      return { checked: true, wasRunning: false, recovered: false };
+    }
+    ensureSandboxPortForward(sandboxName);
+    if (!quiet) {
+      console.log(
+        `  ${G}✓${R} ${agentRuntime.getAgentDisplayName(agent)} gateway restarted inside sandbox.`,
+      );
+      console.log(`  ${G}✓${R} Port forward re-established.`);
+    }
+  } else if (!quiet) {
+    console.error(
+      `  Could not restart ${agentRuntime.getAgentDisplayName(agent)} gateway automatically.`,
+    );
+    console.error("  Connect to the sandbox and run manually:");
+    console.error(`    ${agentRuntime.getGatewayCommand(agent)}`);
+  }
+
+  return { checked: true, wasRunning: false, recovered };
 }
 
 function buildRecoveredSandboxEntry(
