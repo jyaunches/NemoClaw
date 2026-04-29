@@ -74,7 +74,10 @@ export function resolveHomeDir(): string {
       );
     }
   } catch (error) {
-    if (!isErrnoException(error) || error.code !== "ENOENT") {
+    if (
+      !isErrnoException(error) ||
+      error.code !== "ENOENT"
+    ) {
       throw error;
     }
   }
