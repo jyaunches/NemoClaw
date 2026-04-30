@@ -1559,10 +1559,9 @@ function resolveNonInteractiveWebSearchProvider(): WebSearchProvider {
   if (!envValue) return "brave";
   const parsed = webSearch.parseWebSearchProvider(envValue);
   if (!parsed) {
-    console.warn(
-      `  ⚠ Invalid NEMOCLAW_WEB_SEARCH_PROVIDER="${envValue}". Falling back to "brave".`,
+    throw new Error(
+      `Invalid NEMOCLAW_WEB_SEARCH_PROVIDER="${envValue}". Valid values: brave, gemini, tavily.`,
     );
-    return "brave";
   }
   return parsed;
 }
@@ -1627,6 +1626,31 @@ function validateWebSearchApiKey(
 }
 
 /**
+ * Provider-agnostic recovery prompt for web search credential validation failures.
+ */
+async function promptWebSearchRecovery(
+  providerLabel: string,
+  validation: ValidationFailureLike,
+): Promise<"retry" | "skip"> {
+  const recovery = classifyValidationFailure(validation);
+
+  if (recovery.kind === "credential") {
+    console.log(`  ${providerLabel} rejected that API key.`);
+  } else if (recovery.kind === "transport") {
+    console.log(getTransportRecoveryMessage(validation));
+  } else {
+    console.log(`  ${providerLabel} validation did not succeed.`);
+  }
+
+  const answer = (await prompt("  Type 'retry', 'skip', or 'exit' [retry]: ")).trim().toLowerCase();
+  if (answer === "skip") return "skip";
+  if (answer === "exit" || answer === "quit") {
+    exitOnboardFromPrompt();
+  }
+  return "retry";
+}
+
+/**
  * Prompt for and validate a web search API key for the given provider.
  * Returns the validated key or null if the user skips.
  */
@@ -1681,7 +1705,7 @@ async function ensureValidatedWebSearchCredential(
       );
     }
 
-    const action = await promptBraveSearchRecovery(validation);
+    const action = await promptWebSearchRecovery(meta.label, validation);
     if (action === "skip") {
       console.log(`  Skipping ${meta.label} setup.`);
       console.log("");
@@ -1975,7 +1999,16 @@ function patchStagedDockerfile(
     /^ARG NEMOCLAW_WEB_SEARCH_ENABLED=.*$/m,
     `ARG NEMOCLAW_WEB_SEARCH_ENABLED=${webSearchConfig ? "1" : "0"}`,
   );
-  if (webSearchConfig) {
+  if (webSearchConfig && webSearchConfig.provider && webSearchConfig.provider !== "brave") {
+    // For non-Brave providers, the Dockerfile must declare the NEMOCLAW_WEB_SEARCH_PROVIDER
+    // ARG. If it doesn't (e.g. an older custom Dockerfile), the replace is a no-op and the
+    // image would silently default to Brave — fail fast instead.
+    if (!/^\s*ARG\s+NEMOCLAW_WEB_SEARCH_PROVIDER=/m.test(dockerfile)) {
+      throw new Error(
+        `Selected web search provider "${webSearchConfig.provider}" but the Dockerfile does not declare ARG NEMOCLAW_WEB_SEARCH_PROVIDER. ` +
+          "Update the Dockerfile or select Brave instead.",
+      );
+    }
     dockerfile = dockerfile.replace(
       /^ARG NEMOCLAW_WEB_SEARCH_PROVIDER=.*$/m,
       `ARG NEMOCLAW_WEB_SEARCH_PROVIDER=${webSearchConfig.provider}`,
@@ -8357,7 +8390,8 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       sandboxReuseState === "ready";
     if (resumeSandbox) {
       if (webSearchConfig) {
-        note("  [resume] Reusing Brave Search configuration already baked into the sandbox.");
+        const wsLabel = webSearch.getWebSearchProvider(webSearchConfig.provider).label;
+        note(`  [resume] Reusing ${wsLabel} configuration already baked into the sandbox.`);
       }
       selectedMessagingChannels = session?.messagingChannels ?? [];
       skippedStepMessage("sandbox", sandboxName);

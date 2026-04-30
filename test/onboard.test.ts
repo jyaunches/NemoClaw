@@ -1048,7 +1048,7 @@ describe("onboard helpers", () => {
         "build-web",
         "openai-api",
         null,
-        { fetchEnabled: true },
+        { provider: "brave", fetchEnabled: true },
       );
       const patched = fs.readFileSync(dockerfilePath, "utf8");
       assert.match(patched, /^ARG NEMOCLAW_WEB_SEARCH_ENABLED=1$/m);
