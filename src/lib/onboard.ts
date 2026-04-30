@@ -1612,10 +1612,16 @@ function validateWebSearchApiKey(
   if (provider === "brave") {
     return validateBraveSearchApiKey(apiKey);
   }
-  // For Gemini and Tavily, accept any non-empty trimmed key as valid.
+  // For Gemini and Tavily, perform basic format validation.
   // Live validation would require making an actual search request.
-  if (!apiKey || !apiKey.trim()) {
+  const trimmed = (apiKey || "").trim();
+  if (!trimmed) {
     return { ok: false, message: "API key cannot be empty." };
+  }
+  // Gemini keys are typically 39 chars (AIza...), Tavily keys are 20+ chars.
+  // Reject obviously invalid short strings.
+  if (trimmed.length < 10) {
+    return { ok: false, message: `API key is too short (${trimmed.length} chars). Check that you pasted the full key.` };
   }
   return { ok: true };
 }
@@ -1704,7 +1710,9 @@ async function configureWebSearch(
   if (isNonInteractive()) {
     const provider = resolveNonInteractiveWebSearchProvider();
     const meta = webSearch.getWebSearchProvider(provider);
-    const apiKey = normalizeCredentialValue(process.env[meta.credentialEnv]);
+    const apiKey =
+      getCredential(meta.credentialEnv) ||
+      normalizeCredentialValue(process.env[meta.credentialEnv]);
     if (!apiKey) {
       return null;
     }
@@ -6985,7 +6993,9 @@ function computeSetupPresetSuggestions(
     if (known && !known.has(name)) return;
     suggestions.push(name);
   };
-  if (webSearchConfig) add("brave");
+  if (webSearchConfig) {
+    add(webSearch.getWebSearchProvider(webSearchConfig.provider).policyPreset);
+  }
   if (provider && LOCAL_INFERENCE_PROVIDERS.includes(provider)) add("local-inference");
   if (Array.isArray(enabledChannels)) {
     for (const channel of enabledChannels) add(channel);
