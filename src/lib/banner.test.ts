@@ -63,16 +63,25 @@ describe("renderBox", () => {
   });
 
   it("caps width at terminal columns", () => {
-    // Mock a narrow terminal
+    // Mock a narrow terminal by overriding the columns getter
+    const original = Object.getOwnPropertyDescriptor(process.stdout, "columns");
     Object.defineProperty(process.stdout, "columns", {
-      value: 80,
-      writable: true,
+      get: () => 80,
       configurable: true,
     });
-    const veryLong = "x".repeat(200);
-    const lines = renderBox([veryLong]);
-    // Box should not exceed 80 chars
-    expect(lines[0].length).toBeLessThanOrEqual(80);
+    try {
+      const veryLong = "x".repeat(200);
+      const lines = renderBox([veryLong]);
+      // Every rendered row should stay within the terminal width
+      expect(lines.every((line) => line.length <= 80)).toBe(true);
+    } finally {
+      if (original) {
+        Object.defineProperty(process.stdout, "columns", original);
+      } else {
+        // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+        delete (process.stdout as unknown as Record<string, unknown>)["columns"];
+      }
+    }
   });
 
   it("respects custom minInner option", () => {

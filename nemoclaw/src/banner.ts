@@ -22,15 +22,18 @@ export function renderBox(
   lines: (string | null)[],
   { minInner = 53 }: { minInner?: number } = {},
 ): string[] {
-  const termCols = Math.max(60, Number(process.stdout.columns || 100));
-  const maxInner = termCols - 4;
+  const termCols = process.stdout.columns > 0 ? process.stdout.columns : 100;
+  const maxInner = Math.max(0, termCols - 4);
   const contentMax = lines.reduce<number>(
     (max, line) => (line === null ? max : Math.max(max, line.length + 2)),
     minInner,
   );
   const inner = Math.min(maxInner, contentMax);
 
-  const pad = (s: string): string => s + " ".repeat(Math.max(0, inner - s.length));
+  const pad = (s: string): string => {
+    if (s.length > inner) return s.slice(0, inner);
+    return s + " ".repeat(inner - s.length);
+  };
   const hBar = "─".repeat(inner);
   const blank = " ".repeat(inner);
 
