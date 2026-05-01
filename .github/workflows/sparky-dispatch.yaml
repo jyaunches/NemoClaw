@@ -1,0 +1,229 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Fork-only E2E workflow — runs on jyaunches/NemoClaw self-hosted DGX Spark runner.
+# Lives on the fork's main + fork/e2e-runner branch. Never PR'd upstream.
+#
+# Usage:
+#   gh workflow run sparky-dispatch --repo jyaunches/NemoClaw -f job=rebuild-openclaw -f ref=fork/e2e-runner
+#
+# The workflow_dispatch must be on fork's default branch (main) so GitHub can
+# discover it. The 'ref' input controls which branch actions/checkout fetches.
+#
+# Runner: nemoclaw-e2e-runner container (ephemeral, --privileged --network host).
+#   - HOME=/home/runner (not /home/jyaunches)
+#   - Node.js 22 at /usr/bin/node (not via NVM)
+#   - Docker CLI via mounted /var/run/docker.sock
+#   - No NVM, no openshell, no nemoclaw pre-installed
+#   - install.sh handles NemoClaw installation from the checked-out source
+
+name: sparky-dispatch
+
+on:
+  workflow_dispatch:
+    inputs:
+      job:
+        description: "rebuild-openclaw, cloud-e2e, runtime-overrides, or launchable-smoke"
+        required: false
+        default: "rebuild-openclaw"
+      ref:
+        description: "Branch to test (default: fork/e2e-runner)"
+        required: false
+        default: "fork/e2e-runner"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sparky-dispatch
+  cancel-in-progress: true
+
+jobs:
+  rebuild-openclaw-e2e:
+    if: inputs.job == 'rebuild-openclaw' || inputs.job == ''
+    runs-on: [self-hosted, dgx-spark]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+
+      - name: Pre-cleanup (Docker-only)
+        run: |
+          set -euo pipefail
+          echo "=== Pre-cleanup: removing E2E gateways and NemoClaw state ==="
+          # Only target E2E gateways — preserve spark-prod personal gateway
+          for gw in nemoclaw openshell; do
+            docker rm -f "openshell-cluster-${gw}" 2>/dev/null || true
+            docker volume rm "openshell-cluster-${gw}" 2>/dev/null || true
+          done
+          rm -f "$HOME/.nemoclaw/sandboxes.json" "$HOME/.nemoclaw/onboard-session.json"
+          echo "=== Pre-cleanup complete ==="
+
+      - name: Run E2E
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_SANDBOX_NAME: "e2e-rebuild-oc"
+          NEMOCLAW_RECREATE_SANDBOX: "1"
+          NEMOCLAW_REBUILD_VERBOSE: "1"
+        run: |
+          set -euo pipefail
+
+          # Run the E2E script directly from the checkout directory.
+          # This avoids the REPO_ROOT resolution bug (the script computes
+          # REPO_ROOT from its own path, which works when run from checkout).
+          cd "${GITHUB_WORKSPACE}"
+          bash test/e2e/test-rebuild-openclaw.sh
+
+      - name: Diagnostic dump on failure
+        if: failure()
+        run: |
+          echo "=== Gateway containers ==="
+          docker ps -a --filter name=openshell-cluster 2>/dev/null || true
+          echo "=== NemoClaw state ==="
+          cat "$HOME/.nemoclaw/sandboxes.json" 2>/dev/null || echo "no registry"
+          cat "$HOME/.nemoclaw/onboard-session.json" 2>/dev/null || echo "no session"
+          echo "=== Docker volumes ==="
+          docker volume ls -q --filter name=openshell-cluster 2>/dev/null || true
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rebuild-e2e-log
+          path: /tmp/nemoclaw-e2e-install.log
+          if-no-files-found: ignore
+
+  cloud-e2e:
+    if: inputs.job == 'cloud-e2e'
+    runs-on: [self-hosted, dgx-spark]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+
+      - name: Pre-cleanup (Docker-only)
+        run: |
+          set -euo pipefail
+          for gw in nemoclaw openshell; do
+            docker rm -f "openshell-cluster-${gw}" 2>/dev/null || true
+            docker volume rm "openshell-cluster-${gw}" 2>/dev/null || true
+          done
+          rm -f "$HOME/.nemoclaw/sandboxes.json" "$HOME/.nemoclaw/onboard-session.json"
+
+      - name: Run cloud E2E
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_SANDBOX_NAME: "e2e-cloud"
+          NEMOCLAW_RECREATE_SANDBOX: "1"
+        run: |
+          set -euo pipefail
+          cd "${GITHUB_WORKSPACE}"
+          bash test/e2e/test-full-e2e.sh
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloud-e2e-install-log
+          path: /tmp/nemoclaw-e2e-install.log
+          if-no-files-found: ignore
+
+  # ── Launchable Install-Flow Smoke Test ─────────────────────────
+  # Validates brev-launchable-ci-cpu.sh on a GitHub-hosted ubuntu-latest
+  # runner (not the DGX Spark). No GPU, no Brev token needed.
+  launchable-smoke:
+    if: inputs.job == 'launchable-smoke'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+
+      - name: Run launchable install-flow smoke test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_SANDBOX_NAME: "e2e-launchable"
+          NEMOCLAW_RECREATE_SANDBOX: "1"
+          SKIP_DOCKER_PULL: "1"
+        run: |
+          set -euo pipefail
+          cd "${GITHUB_WORKSPACE}"
+          bash test/e2e/test-launchable-smoke.sh
+
+      - name: Upload install log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: launchable-smoke-install-log
+          path: /tmp/nemoclaw-launchable-install.log
+          if-no-files-found: ignore
+
+      - name: Upload onboard log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: launchable-smoke-onboard-log
+          path: /tmp/nemoclaw-launchable-onboard.log
+          if-no-files-found: ignore
+
+      - name: Upload test log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: launchable-smoke-test-log
+          path: /tmp/nemoclaw-launchable-test.log
+          if-no-files-found: ignore
+
+  # ── Runtime Overrides E2E ──────────────────────────────────────
+  # Validates entrypoint permission handling, config writes after
+  # CAP_DAC_OVERRIDE drop, and runtime override injection.
+  runtime-overrides-e2e:
+    if: inputs.job == 'runtime-overrides'
+    runs-on: [self-hosted, dgx-spark]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+
+      - name: Pre-cleanup (Docker-only)
+        run: |
+          set -euo pipefail
+          for gw in nemoclaw openshell; do
+            docker rm -f "openshell-cluster-${gw}" 2>/dev/null || true
+            docker volume rm "openshell-cluster-${gw}" 2>/dev/null || true
+          done
+          rm -f "$HOME/.nemoclaw/sandboxes.json" "$HOME/.nemoclaw/onboard-session.json"
+
+      - name: Run runtime-overrides E2E
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_SANDBOX_NAME: "e2e-runtime-overrides"
+          NEMOCLAW_RECREATE_SANDBOX: "1"
+        run: |
+          set -euo pipefail
+          cd "${GITHUB_WORKSPACE}"
+          bash test/e2e/test-runtime-overrides.sh
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-overrides-e2e-log
+          path: /tmp/nemoclaw-e2e-install.log
+          if-no-files-found: ignore
