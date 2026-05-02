@@ -3,16 +3,10 @@
 
 /* v8 ignore start -- transitional bridge until command actions are extracted from src/nemoclaw.ts. */
 
-import type { RecoveryResult } from "./inventory-commands";
-
 export interface SpawnLikeResult {
   status: number | null;
   stdout?: string | Buffer;
   stderr?: string | Buffer;
-}
-
-export interface GatewayRecoveryResult {
-  recovered: boolean;
 }
 
 export interface SandboxConnectOptions {
@@ -20,14 +14,6 @@ export interface SandboxConnectOptions {
 }
 
 export interface NemoClawRuntimeBridge {
-  captureOpenshell: (
-    args: string[],
-    opts?: { ignoreError?: boolean; timeout?: number },
-  ) => { status: number | null; output: string };
-  recoverNamedGatewayRuntime: () => Promise<GatewayRecoveryResult>;
-  recoverRegistryEntries: (options?: {
-    requestedSandboxName?: string | null;
-  }) => Promise<RecoveryResult>;
   runOpenshell: (
     args: string[],
     opts?: {

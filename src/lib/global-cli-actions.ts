@@ -13,6 +13,7 @@ import {
   runSetupAction as executeSetupAction,
   runSetupSparkAction as executeSetupSparkAction,
 } from "./onboard-action";
+import { recoverNamedGatewayRuntime as recoverNamedGatewayRuntimeAction } from "./gateway-runtime-action";
 import { getNemoClawRuntimeBridge } from "./nemoclaw-runtime-bridge";
 import { help, version } from "./root-help-action";
 
@@ -53,7 +54,13 @@ export function showVersion(): void {
 }
 
 export async function recoverNamedGatewayRuntime(): Promise<{ recovered: boolean }> {
-  return getNemoClawRuntimeBridge().recoverNamedGatewayRuntime();
+  const runtime = getNemoClawRuntimeBridge() as {
+    recoverNamedGatewayRuntime?: () => Promise<{ recovered: boolean }>;
+  };
+  if (typeof runtime.recoverNamedGatewayRuntime === "function") {
+    return runtime.recoverNamedGatewayRuntime();
+  }
+  return recoverNamedGatewayRuntimeAction();
 }
 
 export function runOpenshellProviderCommand(
