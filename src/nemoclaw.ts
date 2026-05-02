@@ -650,6 +650,7 @@ exports.garbageCollectImages = garbageCollectImages;
 exports.recoverNamedGatewayRuntime = recoverNamedGatewayRuntime;
 exports.recoverRegistryEntries = recoverRegistryEntries;
 exports.runOpenshell = runOpenshell;
+exports.sandboxConnect = sandboxConnect;
 exports.sandboxDestroy = sandboxDestroy;
 exports.sandboxChannelsAdd = sandboxChannelsAdd;
 exports.sandboxChannelsList = sandboxChannelsList;
@@ -4899,7 +4900,8 @@ const mainPromise = (async () => {
 
     switch (action) {
       case "connect":
-        await sandboxConnect(cmd, parseSandboxConnectArgs(cmd, actionArgs));
+        parseSandboxConnectArgs(cmd, actionArgs);
+        await runOclif("sandbox:connect", [cmd, ...actionArgs]);
         break;
       case "status":
         if (hasHelpFlag(actionArgs)) {
