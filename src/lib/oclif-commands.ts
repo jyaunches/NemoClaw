@@ -29,11 +29,7 @@ import {
   GarbageCollectImagesCommand,
   UpgradeSandboxesCommand,
 } from "./maintenance-cli-commands";
-import {
-  PolicyAddCommand,
-  PolicyAddRawCommand,
-  PolicyRemoveCommand,
-} from "./policy-mutate-cli-commands";
+import { PolicyAddCommand, PolicyRemoveCommand } from "./policy-mutate-cli-commands";
 import RebuildCliCommand from "./rebuild-cli-command";
 import RecoverCliCommand from "./recover-cli-command";
 import SandboxDoctorCliCommand from "./sandbox-doctor-cli-command";
@@ -88,7 +84,6 @@ export default {
   "sandbox:doctor": SandboxDoctorCliCommand,
   "sandbox:logs": SandboxLogsCommand,
   "sandbox:policy-add": PolicyAddCommand,
-  "sandbox:policy-add:raw": PolicyAddRawCommand,
   "sandbox:policy-list": SandboxPolicyListCommand,
   "sandbox:policy-remove": PolicyRemoveCommand,
   "sandbox:rebuild": RebuildCliCommand,
