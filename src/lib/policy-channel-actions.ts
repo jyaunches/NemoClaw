@@ -13,7 +13,7 @@ import { recoverNamedGatewayRuntime } from "./gateway-runtime-action";
 const { isNonInteractive } = require("./onboard") as { isNonInteractive: () => boolean };
 const onboardProviders = require("./onboard-providers");
 import * as policies from "./policies";
-import { parsePolicyAddArgs } from "./policy-channel-helpers";
+import { parsePolicyAddArgs } from "./domain/policy-channel";
 import * as registry from "./registry";
 import { runOpenshell } from "./openshell-runtime";
 import { rebuildSandbox } from "./sandbox-runtime-actions";

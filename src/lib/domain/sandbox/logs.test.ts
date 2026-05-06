@@ -11,7 +11,7 @@ import {
   exitCodeFromSignal,
   getLogsProbeTimeoutMs,
   normalizeSandboxLogsOptions,
-} from "./sandbox-logs-helpers";
+} from "./logs";
 
 describe("sandbox logs helpers", () => {
   it("normalizes boolean and partial logs options", () => {

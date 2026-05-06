@@ -5,7 +5,7 @@ import { runDeployAction as executeDeployAction } from "./deploy-action";
 import {
   type GarbageCollectImagesOptions,
   type UpgradeSandboxesOptions,
-} from "./lifecycle-options";
+} from "./domain/lifecycle/options";
 import {
   backupAll as executeBackupAllAction,
   garbageCollectImages as executeGarbageCollectImagesAction,

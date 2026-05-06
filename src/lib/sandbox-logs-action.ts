@@ -14,8 +14,8 @@ import {
   getLogsProbeTimeoutMs,
   normalizeSandboxLogsOptions,
   type LogProbeResult,
-} from "./sandbox-logs-helpers";
-import type { SandboxLogsOptions } from "./sandbox-logs-options";
+} from "./domain/sandbox/logs";
+import type { SandboxLogsOptions } from "./domain/sandbox/log-options";
 
 /* v8 ignore next -- process exit mapping is covered through CLI subprocess log tests. */
 function exitWithSpawnResult(result: LogProbeResult) {

@@ -5,8 +5,8 @@
 
 import os from "node:os";
 
-import type { SandboxLogsOptions } from "./sandbox-logs-options";
-import { DEFAULT_SANDBOX_LOG_LINES } from "./sandbox-logs-options";
+import type { SandboxLogsOptions } from "./log-options";
+import { DEFAULT_SANDBOX_LOG_LINES } from "./log-options";
 
 export const DEFAULT_LOGS_PROBE_TIMEOUT_MS = 5000;
 export const LOGS_PROBE_TIMEOUT_ENV = "NEMOCLAW_LOGS_PROBE_TIMEOUT_MS";

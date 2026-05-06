@@ -4,8 +4,8 @@
 import { Args, Command, Flags } from "@oclif/core";
 
 import { logsSinceDurationFlag } from "../../duration-flags";
-import type { SandboxLogsOptions } from "../../sandbox-logs-options";
-import { DEFAULT_SANDBOX_LOG_LINES } from "../../sandbox-logs-options";
+import type { SandboxLogsOptions } from "../../domain/sandbox/log-options";
+import { DEFAULT_SANDBOX_LOG_LINES } from "../../domain/sandbox/log-options";
 import { showSandboxLogs } from "../../sandbox-runtime-actions";
 
 type SandboxLogsRuntimeBridge = {

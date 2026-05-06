@@ -7,7 +7,7 @@ import {
   parseCustomPolicySource,
   parsePolicyAddArgs,
   shouldSkipPolicyConfirmation,
-} from "./policy-channel-helpers";
+} from "./policy-channel";
 
 describe("policy channel helpers", () => {
   it("parses custom policy source flags", () => {

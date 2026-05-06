@@ -8,7 +8,7 @@ import { prompt as askPrompt } from "./credentials";
 import {
   normalizeRebuildSandboxOptions,
   type RebuildSandboxOptions,
-} from "./lifecycle-options";
+} from "./domain/lifecycle/options";
 
 const { hydrateCredentialEnv } = require("./onboard") as {
   hydrateCredentialEnv: (name: string) => string | null;
@@ -26,7 +26,7 @@ import * as policies from "./policies";
 import * as registry from "./registry";
 import { resolveOpenshell } from "./resolve-openshell";
 import { parseLiveSandboxNames } from "./runtime-recovery";
-import { getSandboxDeleteOutcome } from "./sandbox-destroy-helpers";
+import { getSandboxDeleteOutcome } from "./domain/sandbox/destroy";
 import { removeSandboxRegistryEntry } from "./sandbox-destroy-action";
 import { executeSandboxCommand } from "./sandbox-process-recovery-action";
 import {

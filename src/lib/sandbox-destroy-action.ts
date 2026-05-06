@@ -10,7 +10,7 @@ import { prompt as askPrompt } from "./credentials";
 import {
   type DestroySandboxOptions,
   normalizeDestroySandboxOptions,
-} from "./lifecycle-options";
+} from "./domain/lifecycle/options";
 import * as onboardSession from "./onboard-session";
 import type { Session } from "./onboard-session";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "./openshell-timeouts";
@@ -26,7 +26,7 @@ import {
   getSandboxDeleteOutcome,
   shouldCleanupGatewayAfterDestroy,
   shouldStopHostServicesAfterDestroy,
-} from "./sandbox-destroy-helpers";
+} from "./domain/sandbox/destroy";
 import { G, R, YW } from "./terminal-style";
 
 type DockerRmi = (tag: string, opts?: { ignoreError?: boolean }) => { status: number | null };

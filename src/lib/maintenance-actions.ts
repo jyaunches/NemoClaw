@@ -7,9 +7,9 @@ import { prompt as askPrompt } from "./credentials";
 import {
   type GarbageCollectImagesOptions,
   normalizeGarbageCollectImagesOptions,
-} from "./lifecycle-options";
+} from "./domain/lifecycle/options";
 import { dockerListImagesFormat, dockerRmi } from "./docker";
-import { findOrphanedSandboxImages, parseSandboxImageRows } from "./maintenance-image-helpers";
+import { findOrphanedSandboxImages, parseSandboxImageRows } from "./domain/maintenance/images";
 import { captureOpenshell } from "./openshell-runtime";
 import * as registry from "./registry";
 import { parseLiveSandboxNames } from "./runtime-recovery";

@@ -3,7 +3,11 @@
 
 /* v8 ignore start -- pure helper tests exercise this module; orchestration coverage still runs through dist. */
 
-import { stripAnsi } from "./openshell";
+const ANSI_RE = /\x1b\[[0-9;]*m/g;
+
+function stripAnsi(value = ""): string {
+  return String(value).replace(ANSI_RE, "");
+}
 
 export type SpawnLikeResult = {
   status: number | null;

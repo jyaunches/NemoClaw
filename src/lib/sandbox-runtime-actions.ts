@@ -3,9 +3,9 @@
 
 /* v8 ignore start -- transitional action facade until implementations leave src/nemoclaw.ts. */
 
-import type { DestroySandboxOptions, RebuildSandboxOptions } from "./lifecycle-options";
+import type { DestroySandboxOptions, RebuildSandboxOptions } from "./domain/lifecycle/options";
 import type { SandboxConnectOptions } from "./sandbox-connect-action";
-import type { SandboxLogsOptions } from "./sandbox-logs-options";
+import type { SandboxLogsOptions } from "./domain/sandbox/log-options";
 
 export async function connectSandbox(
   sandboxName: string,

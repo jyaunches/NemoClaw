@@ -8,7 +8,7 @@ import { prompt as askPrompt } from "./credentials";
 import {
   normalizeUpgradeSandboxesOptions,
   type UpgradeSandboxesOptions,
-} from "./lifecycle-options";
+} from "./domain/lifecycle/options";
 import { captureOpenshell } from "./openshell-runtime";
 import * as registry from "./registry";
 import { parseLiveSandboxNames } from "./runtime-recovery";
@@ -19,7 +19,7 @@ import {
   classifyUpgradeableSandboxes,
   shouldSkipUpgradeConfirmation,
   splitRebuildableSandboxes,
-} from "./upgrade-sandboxes-helpers";
+} from "./domain/maintenance/upgrade";
 
 // ── Upgrade sandboxes (#1904) ────────────────────────────────────
 // Detect sandboxes running stale agent versions and offer to rebuild them.
