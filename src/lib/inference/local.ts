@@ -529,9 +529,17 @@ export function clearPersistedOllamaHostIfUnused(
 export function getOllamaApiCommand(
   curlArgs: readonly string[],
   host: string = getResolvedOllamaHost(),
+  options: { dockerDetached?: boolean } = {},
 ): string[] {
   return host === OLLAMA_HOST_DOCKER_INTERNAL
-    ? ["docker", "run", "--rm", CONTAINER_REACHABILITY_IMAGE, ...curlArgs]
+    ? [
+        "docker",
+        "run",
+        "--rm",
+        ...(options.dockerDetached ? ["-d"] : []),
+        CONTAINER_REACHABILITY_IMAGE,
+        ...curlArgs,
+      ]
     : ["curl", ...curlArgs];
 }
 
@@ -1278,7 +1286,7 @@ export function getLocalProviderHealthCheck(provider: string): string[] | null {
   }
   if (!endpoint) return null;
   const curlArgs = buildValidatedCurlCommandArgs(["-sf", endpoint]);
-  return provider === "ollama-local" ? getOllamaApiCommand(curlArgs) : ["curl", ...curlArgs];
+  return ["curl", ...curlArgs];
 }
 
 /**
@@ -2253,7 +2261,11 @@ export function selectDefaultOllamaModel(
   return OLLAMA_MODEL_REGISTRY.find((entry) => pool.includes(entry.tag))?.tag ?? pool[0];
 }
 
-export function getOllamaWarmupRequestCommand(model: string, keepAlive = "15m"): string[] {
+export function getOllamaWarmupRequestCommand(
+  model: string,
+  keepAlive = "15m",
+  options: { dockerDetached?: boolean } = {},
+): string[] {
   const payload = JSON.stringify({
     model,
     prompt: "Hello, reply in less than 5 words",
@@ -2276,6 +2288,7 @@ export function getOllamaWarmupRequestCommand(model: string, keepAlive = "15m"):
       payload,
     ],
     host,
+    options,
   );
 }
 
@@ -2303,7 +2316,7 @@ export function runOllamaWarmup(
 ): void {
   const windowsHost = getResolvedOllamaHost() === OLLAMA_HOST_DOCKER_INTERNAL;
   const command = windowsHost
-    ? getOllamaWarmupRequestCommand(model)
+    ? getOllamaWarmupRequestCommand(model, "15m", { dockerDetached: true })
     : getOllamaWarmupCommand(model);
   let execution: PreparedOllamaApiExecution;
   try {
@@ -2338,10 +2351,10 @@ export function getOllamaProbeCommand(
     keep_alive: keepAlive,
     options: { num_predict: 16 },
   });
-  const host = getResolvedOllamaHost();
-  const endpoint = `http://${host}:${OLLAMA_PORT}/api/generate`;
-  return getOllamaApiCommand(
-    buildValidatedCurlCommandArgs([
+  const endpoint = `http://${getResolvedOllamaHost()}:${OLLAMA_PORT}/api/generate`;
+  return [
+    "curl",
+    ...buildValidatedCurlCommandArgs([
       "-sS",
       "--max-time",
       String(timeoutSeconds),
@@ -2351,8 +2364,7 @@ export function getOllamaProbeCommand(
       payload,
       endpoint,
     ]),
-    host,
-  );
+  ];
 }
 
 export function validateOllamaModel(
@@ -2374,6 +2386,7 @@ export function validateOllamaModel(
   const probeCmd = getOllamaProbeCommand(model);
   const probeResult = captureEx(probeCmd);
   let output = probeResult.stdout;
+  let timedOut = probeResult.timedOut;
   // Cold-loading a large model from disk can routinely exceed the default 120 s
   // probe window — on DGX Spark unified-memory hosts (#3251) and also on
   // tight-VRAM dGPU hosts (e.g. NVIDIA L4 23 GB) where the runner spills GPU→CPU
@@ -2383,13 +2396,31 @@ export function validateOllamaModel(
   if (probeResult.timedOut) {
     const retryResult = captureEx(getOllamaProbeCommand(model, 300));
     output = retryResult.stdout;
+    timedOut = retryResult.timedOut;
   }
   if (!output) {
+    const localDaemon = getResolvedOllamaHost() === OLLAMA_LOCALHOST;
+    const staleRunnerTimeout = timedOut && localDaemon && process.platform === "linux";
+    const activeSystemdUnit =
+      staleRunnerTimeout &&
+      capture(["systemctl", "is-active", "ollama.service"], {
+        ignoreError: true,
+        timeout: 5_000,
+      }).trim() === "active";
+    const staleRunnerRecovery =
+      staleRunnerTimeout
+        ? " Stale runner processes from a previous model may be holding GPU memory. " +
+          (activeSystemdUnit
+            ? "Run 'sudo systemctl restart ollama' and rerun onboarding."
+            : "Restart Ollama and rerun onboarding.")
+        : "";
+    const failure =
+      timedOut === true
+        ? `Selected Ollama model '${model}' did not answer the local probe in time. It may still be loading, too large for the host, or otherwise unhealthy.`
+        : `Selected Ollama model '${model}' failed the local probe without a response. Check that Ollama is running and the model is available.`;
     return {
       ok: false,
-      message:
-        `Selected Ollama model '${model}' did not answer the local probe in time. ` +
-        "It may still be loading, too large for the host, or otherwise unhealthy.",
+      message: failure + staleRunnerRecovery,
     };
   }
 
