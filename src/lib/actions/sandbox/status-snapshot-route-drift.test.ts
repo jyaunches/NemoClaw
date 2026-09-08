@@ -116,7 +116,7 @@ describe("collectSandboxStatusSnapshot route drift", () => {
     expect(snapshot.routeDrift).toBeNull();
   });
 
-  it("reports no drift when the live route is unreadable — repair, not divergence (#6315)", async () => {
+  it("omits llama.cpp attribution when the live route is unreadable (#10256)", async () => {
     capture.mockResolvedValue({
       status: 1,
       output: "",
@@ -124,12 +124,36 @@ describe("collectSandboxStatusSnapshot route drift", () => {
 
     const snapshot = await collectSandboxStatusSnapshot(
       "alpha",
-      snapshotDeps({ provider: "nvidia", model: "nvidia/nemotron" }),
+      snapshotDeps({
+        provider: "llama-cpp-local",
+        model: "muse-glimmer",
+        endpointUrl: "http://127.0.0.1:8081/v1",
+      }),
     );
 
     expect(snapshot.routeDrift).toBeNull();
-    expect(snapshot.currentProvider).toBe("nvidia");
-    expect(snapshot.currentModel).toBe("nvidia/nemotron");
+    expect(snapshot.currentProvider).toBe("llama-cpp-local");
+    expect(snapshot.currentModel).toBe("muse-glimmer");
+    expect(snapshot.llamaCpp).toBeNull();
+  });
+
+  it("omits llama.cpp attribution when a failed route lookup returns parsable output (#10256)", async () => {
+    capture.mockResolvedValue({
+      status: 1,
+      output: "Gateway inference:\n  Provider: llama-cpp-local\n  Model: muse-glimmer\n",
+    } as Awaited<ReturnType<typeof captureOpenshellForStatus>>);
+
+    const snapshot = await collectSandboxStatusSnapshot(
+      "alpha",
+      snapshotDeps({
+        provider: "llama-cpp-local",
+        model: "muse-glimmer",
+        endpointUrl: "http://127.0.0.1:8081/v1",
+      }),
+    );
+
+    expect(snapshot.liveRoute).toBeNull();
+    expect(snapshot.llamaCpp).toBeNull();
   });
 
   it("reports no drift when the registry entry has no recorded route (#6315)", async () => {
