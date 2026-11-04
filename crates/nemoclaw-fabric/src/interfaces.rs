@@ -72,6 +72,7 @@ fn convention(adapter_id: &str, interface: &str) -> Option<Convention> {
         }
         ("nvidia.fabric.hermes", "api") => ("hermes", true, false, SignIn::BearerToken),
         ("nvidia.fabric.hermes", "dashboard") => ("hermes", false, false, SignIn::None),
+        ("nvidia.fabric.hermes", "terminal") => ("hermes", false, true, SignIn::SandboxExec),
         ("nvidia.fabric.langchain.deepagents-code", "terminal") => {
             ("deepagents-code", false, true, SignIn::SandboxExec)
         }
@@ -175,4 +176,30 @@ pub fn access(
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn hermes_terminal_uses_kept_home_without_a_port() {
+        let configuration = json!({
+            "harness": {"adapter_id": "nvidia.fabric.hermes", "settings": {
+                "interfaces": {"terminal": {}}
+            }},
+            "runtime": {"artifacts": "/sandbox/artifacts", "keep_state": true},
+            "metadata": {"name": "assistant"}
+        });
+        let entries = access("assistant", &configuration, Some("runtime-1"));
+        assert_eq!(entries[0].sign_in, SignIn::SandboxExec);
+        assert_eq!(
+            entries[0].launcher.as_deref(),
+            Some(
+                "/sandbox/artifacts/.fabric/state/nvidia.fabric.hermes/assistant/interfaces/terminal"
+            )
+        );
+        assert_eq!(entries[0].port, None);
+    }
 }
